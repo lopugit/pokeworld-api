@@ -1,0 +1,53 @@
+{
+  "name": "pokeworld-api",
+  "version": "1.0.0",
+  "description": "",
+  "main": "node/index.js",
+  "scripts": {
+    "dev.dev": "npm run stop.dev && npm run start.dev",
+    "stop.dev": "pm2 delete ecosystem.config.js",
+    "start.dev": "pm2 start ecosystem.config.js",
+    "start": "node node/index.js",
+    "log.dev": "pm2 log pokeworld-api",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lopugit/pokeworld-api.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/lopugit/pokeworld-api/issues"
+  },
+  "homepage": "https://github.com/lopugit/pokeworld-api#readme",
+  "dependencies": {
+    "axios": "^0.24.0",
+    "bcrypt": "^5.0.1",
+    "body-parser": "^1.19.1",
+    "cors": "^2.8.5",
+    "dotenv": "^10.0.0",
+    "express": "^4.17.2",
+    "fs": "0.0.1-security",
+    "lodash": "^4.17.21",
+    "luxon": "^2.3.0",
+    "mongodb": "^4.3.0",
+    "pug": "^3.0.2"
+  },
+  "devDependencies": {
+    "@nuxtjs/eslint-config": "^8.0.0",
+    "@prettier/plugin-pug": "^1.19.1",
+    "eslint": "^8.6.0",
+    "eslint-config-prettier": "^8.3.0",
+    "eslint-config-xo": "^0.39.0",
+    "eslint-plugin-jest": "^25.3.4",
+    "eslint-plugin-node": "^11.1.0",
+    "eslint-plugin-nuxt": "^3.1.0",
+    "eslint-plugin-prettier": "^4.0.0",
+    "eslint-plugin-unicorn": "^40.0.0",
+    "eslint-plugin-vue": "^8.2.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
