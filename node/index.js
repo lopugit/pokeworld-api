@@ -46,10 +46,6 @@ app.get('/', (req, res) => {
 	res.status(200).send('Hello Pokeworld!')
 })
 
-const util = require('util');
-const stream = require('stream');
-const pipeline = util.promisify(stream.pipeline);
-
 app.get('/v1/block', async (req, res) => {
 
 	const { lat, lng } = req.query
@@ -62,7 +58,7 @@ app.get('/v1/block', async (req, res) => {
 			zoom: 19,
 			scale: 2,
 			size: '1280x1280',
-			key: 'AIzaSyCr4DE3tPWa74jbk4AGfdN2Czdmtp6esPI',
+			key: process.env.GOOGLE_API_KEY,
 			maptype: 'roadmap',
 			style: 'feature:all|element:labels|visibility:off',
 		},
