@@ -3,6 +3,15 @@ module.exports = {
 		name: 'pokeworld-api',
 		script: 'node/index.js',
 		watch: '.',
-		ignore_watch: ['./test1.png', './test2.png'],
+		/* eslint-disable camelcase */
+		ignore_watch: './db',
+		/* eslint-enable camelcase */
+		namespace: 'pokeworld',
+	}, {
+		name: 'pokeworld-map-test',
+		namespace: 'pokeworld',
+		autorestart: false,
+		script: 'node node/tests/runGenerateMap.js',
+		watch: ['node/tests'],
 	}],
 };

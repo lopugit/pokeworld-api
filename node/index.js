@@ -11,7 +11,7 @@ const { DateTime } = require('luxon')
 const bcrypt = require('bcrypt')
 const saltRounds = 10
 const { get } = require('lodash')
-const { roundToNearestTude } = require('./functions.js')
+const { roundToNearestTude, getMapAt } = require('./functions.js')
 const fs = require('fs')
 
 // Mongodb setup
@@ -49,26 +49,10 @@ app.get('/', (req, res) => {
 app.get('/v1/block', async (req, res) => {
 
 	const { lat, lng } = req.query
-	const roundedLat = roundToNearestTude(lat)
-	const roundedLng = roundToNearestTude(lng)
+	// const roundedLat = roundToNearestTude(lat)
+	// const roundedLng = roundToNearestTude(lng)
 
-	const response = await axios.get('https://maps.googleapis.com/maps/api/staticmap', {
-		params: {
-			center: `${roundedLat},${roundedLng}`,
-			zoom: 19,
-			scale: 2,
-			size: '1280x1280',
-			key: process.env.GOOGLE_API_KEY,
-			maptype: 'roadmap',
-			style: 'feature:all|element:labels|visibility:off',
-		},
-		responseType: 'arraybuffer',
-		headers: {
-			'Content-Type': 'image/png',
-			Connection: 'keep-alive',
-			'Keep-Alive': 'timeout=1500, max=100',
-		},
-	})
+	const response = await getMapAt(lat, lng)
 		.catch(err => {
 			console.error(err.response.data)
 		})
