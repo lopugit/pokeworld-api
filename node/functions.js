@@ -307,84 +307,73 @@ async function getMapAt(lat, lng, zoom = 19) {
 	return 'No image'
 }
 
-// Mongodb setup
-let cacheCollection
-let map
-try {
-	const { MongoClient } = require('mongodb')
-	const url = `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGODB_PWD}@${process.env.MONGODB_CLUSTER}.nhb33.mongodb.net/${process.env.MONGODB_DB}?retryWrites=true&w=majority`
-	console.log('Connecting to MongoDB with url', url)
-	const client = new MongoClient(url, { useNewUrlParser: true, useUnifiedTopology: true })
-
-	// Connect to client
-	client.connect(err => {
-		if (err) {
-			console.error('Connection failed', err)
-		} else {
-			console.log('Connected to MongoDB')
-			cacheCollection = client.db(process.env.MONGODB_DB).collection('cache')
-			map = client.db(process.env.MONGODB_DB).collection('map')
-		}
-	})
-} catch (err) {
-	console.error(err)
-}
-
-const mapReady = new Promise((res, rej) => {
-	const interval = setInterval(() => {
-		if (map) {
-			clearInterval(interval)
-			res(map)
-		}
-	})
-})
 
 async function generateCoordinatesGrid({
 	write = false,
 	mongodb = false
 }) {
 
-	// await mapReady
+	// Mongodb setup
+	let cacheCollection
+	let map
+	try {
+		const url = `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGODB_PWD}@${process.env.MONGODB_CLUSTER}.nhb33.mongodb.net/${process.env.MONGODB_DB}?retryWrites=true&w=majority`
+		console.log('Connecting to MongoDB with url', url)
+		const client = new MongoClient(url, { useNewUrlParser: true, useUnifiedTopology: true })
 
-	// await map.remove({})
+		// Connect to client
+		await client.connect()
+		console.log('Connected to MongoDB')
+		cacheCollection = await client.db(process.env.MONGODB_DB).collection('cache')
+		map = await client.db(process.env.MONGODB_DB).collection('map')
+	} catch (err) {
+		console.error(err)
+	}
 
 	const lats = []
-
-	for (let lat = -85; lat < 85; lat += getYIncrement(lat, 1024, 19, 2)) {
-		lats.push({
-			i: lats.length,
+	const latsMap = {}
+	for (let lat = -87; lat < 87; lat += getYIncrement(lat, 1024, 19, 2)) {
+		latsMap[Math.floor(lat)] = latsMap[Math.floor(lat)] || []
+		const latObj = {
+			y: lats.length,
 			lat,
 			center: lat + (getYIncrement(lat, 1024, 19, 2) / 2),
-		})
-		log(() => {
-			console.log('Generated', lats.length, 'tiles', 'lat:', lat)
-		})
+		}
+		lats.push(latObj)
+		latsMap[Math.floor(lat)].push(latObj)
 	}
+	console.log('Generated', lats.length, 'tiles')
 	if (write) {
 		fs.writeFileSync('./assets/lats-example.json', JSON.stringify(lats.slice(0, 5), null, 2))
 		fs.writeFileSync('./assets/lats.json', JSON.stringify(lats, null, 2))
+		fs.writeFileSync('./assets/latsMap.json', JSON.stringify(latsMap, null, 2))
 	}
 
 	const lngs = []
-
+	const lngsMap = {}
 	const lngIncrement = getXIncrement(1024, 19, 2)
 	for (let lng = -180; lng < 180; lng += lngIncrement) {
-		lngs.push({
-			i: lngs.length,
+		lngsMap[Math.floor(lng)] = lngsMap[Math.floor(lng)] || []
+		const lngObj = {
+			x: lngs.length,
 			lng,
 			center: lng + (lngIncrement / 2),
-		})
-		log2(() => {
-			console.log('Generated', lngs.length, 'tiles', 'lng:', lng)
-		})
+		}
+		lngsMap[Math.floor(lng)].push(lngObj)
+		lngs.push(lngObj)
 	}
+	console.log('Generated', lngs.length, 'tiles')
 	if (write) {
 		fs.writeFileSync('./assets/lngs-example.json', JSON.stringify(lngs.slice(0, 5), null, 2))
 		fs.writeFileSync('./assets/lngs.json', JSON.stringify(lngs, null, 2))
+		fs.writeFileSync('./assets/lngsMap.json', JSON.stringify(lngsMap, null, 2))
 	}
-	const count = 0
 	if (mongodb) {
-		await map.remove({})
+		let count = 0
+		setInterval(() => {
+			console.log('Current count', count)
+		}, 4000)
+		await map.deleteMany({})
 		for (const lat of lats) {
 			for (const lng of lngs) {
 				await map.insertOne({
@@ -392,8 +381,8 @@ async function generateCoordinatesGrid({
 						type: "Point",
 						coordinates: [lng.center, lat.center]
 					},
-					y: lat.i,
 					x: lng.i,
+					y: lat.i,
 					key: `${lng.i}_${lat.i}`,
 					px: 1024,
 					zoom: 19,

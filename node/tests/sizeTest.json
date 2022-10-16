@@ -1,0 +1,1 @@
+{"_id":{"$oid":"634a00c072e8a0808aba1a20"},"geojson":{"type":"Point","coordinates":[{"$numberDouble":"-179.99931335449222"},{"$numberDouble":"-86.99996406375075"}]},"y":{"$numberInt":"0"},"x":{"$numberInt":"0"},"key":"0_0","px":{"$numberInt":"1024"},"zoom":{"$numberInt":"19"},"scale":{"$numberInt":"2"},"created":{"$date":{"$numberLong":"1665794240135"}}}
