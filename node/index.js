@@ -14,6 +14,7 @@ const { get } = require('lodash')
 const { roundToNearestTude, getMapAt } = require('./functions.js')
 const fs = require('fs')
 const { MongoClient } = require('mongodb')
+const apis = require('./apis.js')
 
 // Express middleware
 app.use(cors({
@@ -24,42 +25,10 @@ app.get('/', (req, res) => {
 	res.status(200).send('Hello Pokeworld!')
 })
 
-	; (async () => {
-
-		// Mongodb setup
-		const url = `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGODB_PWD}@${process.env.MONGODB_CLUSTER}.nhb33.mongodb.net/${process.env.MONGODB_DB}?retryWrites=true&w=majority`
-		console.log('Connecting to MongoDB with url', url)
-		const client = new MongoClient(url, { useNewUrlParser: true, useUnifiedTopology: true })
-
-		// Connect to client
-		await client.connect
-		console.log('Connected to MongoDB')
-		const cacheCollection = client.db(process.env.MONGODB_DB).collection('cache')
-		const map = client.db(process.env.MONGODB_DB).collection('map')
-
-		app.get('/v1/block', async (req, res) => {
-
-			const { lng, lat } = req.query
-
-			// query for map
-			// if (result) {
-			// 	res.status(200).json(result)
-			// }
-			const response = await getMapAt(lat, lng)
-				.catch(err => {
-					console.error(err.response.data)
-				})
-
-			if (get(response, 'data')) {
-				console.log('response.data', response.data)
-				fs.writeFileSync('./test1.png', response.data)
-				res.setHeader('Content-Type', 'image/png')
-				res.setHeader('Content-Length', response.data.length)
-				res.send(response.data)
-			}
-
-		})
-	})();
+app.get('/v1/block', (req, res) => {
+	const resp = apis.v1Block(req)
+	res.status(resp.status).send(resp.send)
+})
 
 app.get('/privacy-policy', async (req, res) => res.status(200).send(pug.compile(`
 .privacy-policy(

@@ -12,6 +12,7 @@ module.exports = {
 	},
 	rules: {
 		semi: 'off',
+		'no-await-in-loop': 'off',
 		'padded-blocks': 'off',
 		'object-curly-spacing': [2, 'always'],
 		'capitalized-comments': 'off',

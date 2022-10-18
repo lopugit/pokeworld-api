@@ -17,6 +17,15 @@
 				"<node_internals>/**"
 			],
 			"type": "pwa-node"
+		},
+		{
+			"name": "Launch API Tests",
+			"program": "${workspaceFolder}/node/tests/apiTests.js",
+			"request": "launch",
+			"skipFiles": [
+				"<node_internals>/**"
+			],
+			"type": "pwa-node"
 		}
 	]
 }

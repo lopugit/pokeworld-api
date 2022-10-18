@@ -252,17 +252,11 @@ function formatCoord(coord) {
 async function saveMapAt(x, y, lat, lng, path, zoom) {
 	const image = await getMapAt(lat, lng, zoom)
 
-	fs.writeFileSync(`${path}/${x}_${y}-source.png`, image)
-
-	await sharp(`${path}/${x}_${y}-source.png`)
-		.extract({ left: 128, top: 128, width: 1024, height: 1024 })
-		.toFile(`${path}/${x}_${y}.png`)
-
 	const promises = []
 
 	for (let offsetX = 0; offsetX < 1024 / 32; offsetX++) {
 		for (let offsetY = 0; offsetY < 1024 / 32; offsetY++) {
-			promises.push(sharp(`${path}/${x}_${y}.png`)
+			promises.push(sharp(image)
 				.extract({ left: offsetX * 32, top: offsetY * 32, width: 32, height: 32 })
 				.toFile(`${path}/${x}_${y}-tile-${offsetX}_${offsetY}.png`),
 			)
@@ -272,7 +266,7 @@ async function saveMapAt(x, y, lat, lng, path, zoom) {
 	await Promise.all(promises)
 
 	fs.rmSync(`${path}/${x}_${y}.png`)
-	fs.rmSync(`${path}/${x}_${y}-source.png`)
+	// fs.rmSync(`${path}/${x}_${y}-source.png`)
 
 }
 
@@ -301,16 +295,17 @@ async function getMapAt(lat, lng, zoom = 19) {
 		})
 
 	if (get(response, 'data')) {
-		return response.data
+		return sharp(response.data)
+			.extract({ left: 128, top: 128, width: 1024, height: 1024 })
+			.toBuffer()
 	}
 
 	return 'No image'
 }
 
-
 async function generateCoordinatesGrid({
 	write = false,
-	mongodb = false
+	mongodb = false,
 }) {
 
 	// Mongodb setup
@@ -337,11 +332,12 @@ async function generateCoordinatesGrid({
 		const latObj = {
 			y: lats.length,
 			lat,
-			center: lat + (getYIncrement(lat, 1024, 19, 2) / 2),
+			latCenter: lat + (getYIncrement(lat, 1024, 19, 2) / 2),
 		}
 		lats.push(latObj)
 		latsMap[Math.floor(lat)].push(latObj)
 	}
+
 	console.log('Generated', lats.length, 'tiles')
 	if (write) {
 		fs.writeFileSync('./assets/lats-example.json', JSON.stringify(lats.slice(0, 5), null, 2))
@@ -357,17 +353,19 @@ async function generateCoordinatesGrid({
 		const lngObj = {
 			x: lngs.length,
 			lng,
-			center: lng + (lngIncrement / 2),
+			lngCenter: lng + (lngIncrement / 2),
 		}
 		lngsMap[Math.floor(lng)].push(lngObj)
 		lngs.push(lngObj)
 	}
+
 	console.log('Generated', lngs.length, 'tiles')
 	if (write) {
 		fs.writeFileSync('./assets/lngs-example.json', JSON.stringify(lngs.slice(0, 5), null, 2))
 		fs.writeFileSync('./assets/lngs.json', JSON.stringify(lngs, null, 2))
 		fs.writeFileSync('./assets/lngsMap.json', JSON.stringify(lngsMap, null, 2))
 	}
+
 	if (mongodb) {
 		let count = 0
 		setInterval(() => {
@@ -378,8 +376,8 @@ async function generateCoordinatesGrid({
 			for (const lng of lngs) {
 				await map.insertOne({
 					geojson: {
-						type: "Point",
-						coordinates: [lng.center, lat.center]
+						type: 'Point',
+						coordinates: [lng.center, lat.center],
 					},
 					x: lng.i,
 					y: lat.i,
