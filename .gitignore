@@ -2,3 +2,7 @@
 /node_modules
 assets/db/tiles
 assets/db/lats
+assets/lats.json
+assets/latsMap.json
+assets/lngs.json
+assets/lngsMap.json
