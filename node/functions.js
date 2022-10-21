@@ -1,10 +1,9 @@
 const fs = require('fs')
 require('dotenv').config()
-const { get, throttle } = require('lodash')
+const { get } = require('lodash')
 const axios = require('axios')
 const throttledQueue = require('throttled-queue');
 const sharp = require('sharp')
-const imageToRgbaMatrix = require('image-to-rgba-matrix');
 const { MongoClient } = require('mongodb')
 
 console.log(process.cwd())
@@ -12,20 +11,9 @@ console.log(process.cwd())
 const lats = JSON.parse(fs.readFileSync('./assets/lats.json'))
 const lngs = JSON.parse(fs.readFileSync('./assets/lngs.json'))
 
-const log = throttle(f => {
-	f()
-}, 1000)
-const log2 = throttle(f => {
-	f()
-}, 1000)
-
-function roundCoord(coord) {
-	return Math.round(coord * 10000000) / 10000000
-}
-
 const saveMapAtThrottled = throttledQueue(50, 1000)
 
-function getXIncrement(width = 1024, zoom = 19, scale = 2) {
+function getXIncrement(width = 512, zoom = 20, scale = 2) {
 	const degreesPerMeterAtEquator = 360 / (2 * Math.PI * 6378137)
 	const metresAtEquatorPerTilePx = (156543.03392 / (2 ** zoom))
 	const multiplier = 1
@@ -33,7 +21,7 @@ function getXIncrement(width = 1024, zoom = 19, scale = 2) {
 	return lngIncrement
 }
 
-function getYIncrement(lat, width = 1024, zoom = 19, scale = 2) {
+function getYIncrement(lat, width = 512, zoom = 20, scale = 2) {
 	const degreesPerMeterAtEquator = 360 / (2 * Math.PI * 6378137)
 	const metresAtEquatorPerTilePx = (156543.03392 / (2 ** zoom))
 	const multiplier = 1
@@ -49,7 +37,7 @@ const generateMap = ({
 	endX = 10,
 	startY = 0,
 	endY = 10,
-	zoom = 19,
+	zoom = 20,
 	path = './assets/db',
 	json = false,
 	html = false,
@@ -85,21 +73,21 @@ const generateMap = ({
 		for (let i = 0; i < max; i++) {
 			if (lngs[i]) {
 				if (lngStart > lngs[i].lng) {
-					startX = lngs[i].i
+					startX = lngs[i].x
 				}
 
 				if (lngEnd > lngs[i].lng) {
-					endX = lngs[i].i
+					endX = lngs[i].x
 				}
 			}
 
 			if (lats[i]) {
 				if (latStart > lats[i].lat) {
-					startY = lats[i].i
+					startY = lats[i].y
 				}
 
 				if (latEnd > lats[i].lat) {
-					endY = lats[i].i
+					endY = lats[i].y
 				}
 			}
 		}
@@ -209,9 +197,9 @@ function generateOutputs(grid, path, json, html) {
 			for (let iY = 0; iY < currentYs.length; iY++) {
 				body += '<div class="column">\n'
 				const currentY = currentYs[iY]
-				for (let offsetY = 0; offsetY < 1024 / 32; offsetY++) {
+				for (let offsetY = 0; offsetY < 512 / 32; offsetY++) {
 					body += '<div class="row">\n'
-					for (let offsetX = 0; offsetX < 1024 / 32; offsetX++) {
+					for (let offsetX = 0; offsetX < 512 / 32; offsetX++) {
 						body += `<img src="tiles/${currentY}_${currentX}-tile-${offsetX}_${offsetY}.png" />\n`
 					}
 
@@ -254,8 +242,8 @@ async function saveMapAt(x, y, lat, lng, path, zoom) {
 
 	const promises = []
 
-	for (let offsetX = 0; offsetX < 1024 / 32; offsetX++) {
-		for (let offsetY = 0; offsetY < 1024 / 32; offsetY++) {
+	for (let offsetX = 0; offsetX < 512 / 32; offsetX++) {
+		for (let offsetY = 0; offsetY < 512 / 32; offsetY++) {
 			promises.push(sharp(image)
 				.extract({ left: offsetX * 32, top: offsetY * 32, width: 32, height: 32 })
 				.toFile(`${path}/${x}_${y}-tile-${offsetX}_${offsetY}.png`),
@@ -265,18 +253,18 @@ async function saveMapAt(x, y, lat, lng, path, zoom) {
 
 	await Promise.all(promises)
 
-	fs.rmSync(`${path}/${x}_${y}.png`)
+	// fs.rmSync(`${path}/${x}_${y}.png`)
 	// fs.rmSync(`${path}/${x}_${y}-source.png`)
 
 }
 
-async function getMapAt(lat, lng, zoom = 19) {
+async function getMapAt(lat, lng, zoom = 20) {
 	const response = await axios.get('https://maps.googleapis.com/maps/api/staticmap', {
 		params: {
 			center: `${lat},${lng}`,
 			zoom,
 			scale: 2,
-			size: '1280x1280',
+			size: '640x640',
 			key: process.env.GOOGLE_API_KEY,
 			maptype: 'roadmap',
 			/* eslint-disable camelcase */
@@ -296,7 +284,7 @@ async function getMapAt(lat, lng, zoom = 19) {
 
 	if (get(response, 'data')) {
 		return sharp(response.data)
-			.extract({ left: 128, top: 128, width: 1024, height: 1024 })
+			.extract({ left: 64, top: 64, width: 512, height: 512 })
 			.toBuffer()
 	}
 
@@ -327,12 +315,12 @@ async function generateCoordinatesGrid({
 
 	const lats = []
 	const latsMap = {}
-	for (let lat = -87; lat < 87; lat += getYIncrement(lat, 1024, 19, 2)) {
+	for (let lat = -87; lat < 87; lat += getYIncrement(lat, 512, 20, 2)) {
 		latsMap[Math.floor(lat)] = latsMap[Math.floor(lat)] || []
 		const latObj = {
 			y: lats.length,
 			lat,
-			latCenter: lat + (getYIncrement(lat, 1024, 19, 2) / 2),
+			latCenter: lat + (getYIncrement(lat, 512, 20, 2) / 2),
 		}
 		lats.push(latObj)
 		latsMap[Math.floor(lat)].push(latObj)
@@ -347,7 +335,7 @@ async function generateCoordinatesGrid({
 
 	const lngs = []
 	const lngsMap = {}
-	const lngIncrement = getXIncrement(1024, 19, 2)
+	const lngIncrement = getXIncrement(512, 20, 2)
 	for (let lng = -180; lng < 180; lng += lngIncrement) {
 		lngsMap[Math.floor(lng)] = lngsMap[Math.floor(lng)] || []
 		const lngObj = {
@@ -366,6 +354,8 @@ async function generateCoordinatesGrid({
 		fs.writeFileSync('./assets/lngsMap.json', JSON.stringify(lngsMap, null, 2))
 	}
 
+	console.log('Done, maybe running mongodb')
+
 	if (mongodb) {
 		let count = 0
 		setInterval(() => {
@@ -382,8 +372,8 @@ async function generateCoordinatesGrid({
 					x: lng.i,
 					y: lat.i,
 					key: `${lng.i}_${lat.i}`,
-					px: 1024,
-					zoom: 19,
+					px: 512,
+					zoom: 20,
 					scale: 2,
 					created: new Date(),
 				}).catch(err => {

@@ -26,6 +26,15 @@
 				"<node_internals>/**"
 			],
 			"type": "pwa-node"
+		},
+		{
+			"name": "Launch API",
+			"program": "${workspaceFolder}/node/index.js",
+			"request": "launch",
+			"skipFiles": [
+				"<node_internals>/**"
+			],
+			"type": "pwa-node"
 		}
 	]
 }

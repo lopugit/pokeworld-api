@@ -1,6 +1,8 @@
 const fs = require('fs')
 const latsMap = JSON.parse(fs.readFileSync('./assets/latsMap.json'))
 const lngsMap = JSON.parse(fs.readFileSync('./assets/lngsMap.json'))
+const latsDb = JSON.parse(fs.readFileSync('./assets/lats.json'))
+const lngsDb = JSON.parse(fs.readFileSync('./assets/lngs.json'))
 const { get } = require('lodash')
 const functions = require('./functions.js')
 const { MongoClient } = require('mongodb')
@@ -12,9 +14,14 @@ const imageToRgbaMatrix = require('image-to-rgba-matrix');
 
 const v1Block = async req => {
 
-	const { lng, lat, regenerate } = req.query
+	const { lng, lat, regenerate, skipTilesExtraction, blockX, blockY, deleteOldTiles } = req.query
 
-	if (typeof lng === 'number' && typeof lat === 'number') {
+	if (
+		(typeof lng === 'number' && typeof lat === 'number')
+		|| (typeof lng === 'string' && typeof lat === 'string')
+		|| (typeof blockX === 'number' && typeof blockY === 'number')
+		|| (typeof blockX === 'string' && typeof blockY === 'string')
+	) {
 
 		await client.connect()
 		const tileDb = await client.db(process.env.MONGODB_DB).collection('tiles')
@@ -23,40 +30,25 @@ const v1Block = async req => {
 		const lngRounded = Math.floor(lng)
 		const latRounded = Math.floor(lat)
 
-		const lngs = lngsMap[lngRounded]
-		const lngFound = lngs.reduce((acc, tmpLng) => lng > acc.lng ? tmpLng : acc, { lng: -180 })
+		const lngs = blockX ? lngsDb : lngsMap[lngRounded]
+		const lngFound = blockX ? getLngFromBlock(blockX, lngs) : getLngFromLng(lng, lngs)
 
-		const lats = latsMap[latRounded]
-		const latFound = lats.reduce((acc, tmpLat) => lat > acc.lat ? tmpLat : acc, { lat: -90 })
+		const lats = blockY ? latsDb : latsMap[latRounded]
+		const latFound = blockY ? getLatFromBlock(blockY, lats) : getLatFromLat(lat, lats)
 
 		const block = {
 			...lngFound,
 			...latFound,
 		}
 
-		// query mongodb for map
-		let blockDbObject = await blockDb.findOne({
-			x: block.x,
-			y: block.y,
-		})
-
-		if (blockDbObject) {
-			// handle if map exists
-		} else {
-			// handle if map doesn't exist
-			// generate google maps base map
-			generateMapFor(block, false)
-
+		if (!block.x && !block.y) {
+			return {
+				status: 400,
+				send: 'No block found',
+			}
 		}
 
-		blockDbObject = blockDbObject || await blockDb.findOne({
-			x: block.x,
-			y: block.y,
-		})
-
-		if (blockDbObject && regenerate) {
-			generateMapFor(block, true)
-		}
+		await generateBlocks(block, regenerate, skipTilesExtraction, deleteOldTiles)
 
 		const tiles = await tileDb.find({
 			blockX: block.x,
@@ -80,16 +72,171 @@ const v1Block = async req => {
 
 }
 
-const generateMapFor = async (block, exists) => {
+const generateBlocks = async (block, regenerate, skipTilesExtraction, deleteOldTiles) => {
 
+	const lngs = lngsDb
+	const lats = latsDb
+
+	const blocks = [
+		{
+			...getLngFromBlock(block.x - 1, lngs),
+			...getLatFromBlock(block.y + 1, lats),
+		},
+		{
+			...getLngFromBlock(block.x, lngs),
+			...getLatFromBlock(block.y + 1, lats),
+		},
+		{
+			...getLngFromBlock(block.x + 1, lngs),
+			...getLatFromBlock(block.y + 1, lats),
+		},
+		{
+			...getLngFromBlock(block.x - 1, lngs),
+			...getLatFromBlock(block.y, lats),
+		},
+		{
+			...getLngFromBlock(block.x, lngs),
+			...getLatFromBlock(block.y, lats),
+		},
+		{
+			...getLngFromBlock(block.x + 1, lngs),
+			...getLatFromBlock(block.y, lats),
+		},
+		{
+			...getLngFromBlock(block.x - 1, lngs),
+			...getLatFromBlock(block.y - 1, lats),
+		},
+		{
+			...getLngFromBlock(block.x, lngs),
+			...getLatFromBlock(block.y - 1, lats),
+		},
+		{
+			...getLngFromBlock(block.x + 1, lngs),
+			...getLatFromBlock(block.y - 1, lats),
+		},
+	]
+
+	const stats = {
+		count: 0,
+	}
+
+	const inter1 = setInterval(() => {
+		console.log('Generating block tiles', stats.count, 'of', blocks.length)
+	}, 1000)
+
+	const proms = []
+
+	for (const block of blocks) {
+		stats.count++
+		proms.push(generateBlockTiles(block, regenerate, skipTilesExtraction))
+	}
+
+	await Promise.all(proms)
+
+	clearInterval(inter1)
+	stats.count = 0
+
+	const inter2 = setInterval(() => {
+		console.log('Generating block map', stats.count, 'of', blocks.length)
+	}, 1000)
+
+	for (const block of blocks) {
+		stats.count++
+		await generateBlockMap(block, regenerate, skipTilesExtraction)
+	}
+
+	clearInterval(inter2)
+	stats.count = 0
+	const inter3 = setInterval(() => {
+		console.log('Reenerating block map', stats.count, 'of', blocks.length)
+	}, 1000)
+
+	for (const block of blocks) {
+		stats.count++
+		await generateBlockMap(block, regenerate, true)
+	}
+
+	clearInterval(inter3)
+
+}
+
+const generateBlockMap = async (block, regenerate, skipTilesExtraction, deleteOldTiles) => {
+
+	const blockDb = await client.db(process.env.MONGODB_DB).collection('blocks')
+
+	console.log('Generating block', block.x, block.y)
+
+	// query mongodb for map
+	let blockDbObject = await blockDb.findOne({
+		x: block.x,
+		y: block.y,
+	})
+
+	if (blockDbObject) {
+		// handle if map exists
+	} else {
+		// handle if map doesn't exist
+		// generate google maps base map
+		await generateMapFor(block, false, skipTilesExtraction, deleteOldTiles)
+
+	}
+
+	blockDbObject = blockDbObject || await blockDb.findOne({
+		x: block.x,
+		y: block.y,
+	})
+
+	if (blockDbObject && regenerate) {
+		await generateMapFor(block, true, skipTilesExtraction, deleteOldTiles)
+	}
+
+}
+
+const generateBlockTiles = async (block, regenerate, skipTilesExtraction, deleteOldTiles) => {
+
+	const blockDb = await client.db(process.env.MONGODB_DB).collection('blocks')
+
+	console.log('Generating block', block.x, block.y)
+
+	// query mongodb for map
+	let blockDbObject = await blockDb.findOne({
+		x: block.x,
+		y: block.y,
+	})
+
+	if (blockDbObject) {
+		// handle if map exists
+	} else {
+		// handle if map doesn't exist
+		// generate google maps base map
+		await generateTilesFor(block, false, skipTilesExtraction, deleteOldTiles)
+
+	}
+
+	blockDbObject = blockDbObject || await blockDb.findOne({
+		x: block.x,
+		y: block.y,
+	})
+
+	if (blockDbObject && regenerate) {
+		await generateTilesFor(block, true, skipTilesExtraction, deleteOldTiles)
+	}
+
+}
+
+const getLngFromBlock = (blockX, lngs) => lngs.reduce((acc, tmpLng) => blockX > acc.x ? tmpLng : acc, { x: 0 })
+const getLatFromBlock = (blockY, lats) => lats.reduce((acc, tmpLat) => blockY > acc.y ? tmpLat : acc, { y: 0 })
+const getLngFromLng = (lng, lngs) => lngs.reduce((acc, tmpLng) => lng > acc.lng ? tmpLng : acc, { lng: -180 })
+const getLatFromLat = (lat, lats) => lats.reduce((acc, tmpLat) => lat > acc.lat ? tmpLat : acc, { lat: -90 })
+
+const generateTilesFor = async (block, exists, skipTilesExtraction, deleteOldTiles) => {
 	const tileDb = await client.db(process.env.MONGODB_DB).collection('tiles')
 	const blockDb = await client.db(process.env.MONGODB_DB).collection('blocks')
 
 	const googleMap = await functions.getMapAt(block.lat, block.lng, 19)
 
-	fs.writeFileSync('test.png', googleMap)
 	if (exists) {
-		const res = await blockDb.findOneAndUpdate(
+		await blockDb.findOneAndUpdate(
 			{
 				x: block.x,
 				y: block.y,
@@ -100,76 +247,1218 @@ const generateMapFor = async (block, exists) => {
 					googleMap,
 				},
 			})
-		console.log(res)
 	} else {
-		const res = await blockDb.insertOne({
+		await blockDb.insertOne({
 			...block,
 			googleMap,
 		})
-		console.log(res)
 	}
 
-	const tiles = []
-	for (let offsetX = 0; offsetX < 1024 / 32; offsetX++) {
-		for (let offsetY = 0; offsetY < 1024 / 32; offsetY++) {
-			const q1 = await sharp(googleMap)
-				.extract({ left: offsetX * 32, top: offsetY * 32, width: 16, height: 16 })
-				.toBuffer()
-			const q2 = await sharp(googleMap)
-				.extract({ left: (offsetX * 32) + 16, top: offsetY * 32, width: 16, height: 16 })
-				.toBuffer()
-			const q3 = await sharp(googleMap)
-				.extract({ left: offsetX * 32, top: (offsetY * 32) + 16, width: 16, height: 16 })
-				.toBuffer()
-			const q4 = await sharp(googleMap)
-				.extract({ left: (offsetX * 32) + 16, top: (offsetY * 32) + 16, width: 16, height: 16 })
-				.toBuffer()
+	if (!skipTilesExtraction) {
 
-			tiles.push({
+		if (deleteOldTiles) {
+			await tileDb.deleteMany({
 				blockX: block.x,
 				blockY: block.y,
-				x: offsetX,
-				y: offsetY,
-				qudrants: {
-					q1: {
-						image: q1,
-						colourData: await quadrantColourData(q1),
-					},
-					q2: {
-						image: q2,
-						colourData: await quadrantColourData(q2),
-					},
-					q3: {
-						image: q3,
-						colourData: await quadrantColourData(q3),
-					},
-					q4: {
-						image: q4,
-						colourData: await quadrantColourData(q4),
-					},
-				},
 			})
 		}
-	}
 
-	for (const tile of tiles) {
-		await tileDb.findOneAndUpdate({
-			blockX: tile.blockX,
-			blockY: tile.blockY,
-			x: tile.x,
-			y: tile.y,
-		}, {
-			$set: {
-				...tile,
-			},
-		}, {
-			upsert: true,
-		})
+		const stats = {
+			count: 0,
+			total: 512 / 32 * 512 / 32,
+		}
+
+		const inter = setInterval(() => {
+			console.log('Processed', stats.count, 'out of', stats.total, 'tiles')
+		}, 1000)
+
+		const tiles = []
+		for (let offsetX = 0; offsetX < 512 / 32; offsetX++) {
+			for (let offsetY = 0; offsetY < 512 / 32; offsetY++) {
+				const tile = await sharp(googleMap)
+					.extract({ left: offsetX * 32, top: offsetY * 32, width: 32, height: 32 })
+					.toBuffer()
+
+				tiles.push({
+					blockX: block.x,
+					blockY: block.y,
+					x: offsetX,
+					y: offsetY,
+					image: tile,
+					colourData: await colourData(tile),
+				})
+				stats.count++
+			}
+		}
+
+		clearInterval(inter)
+
+		stats.count = 0
+		stats.total = tiles.length
+
+		const inter2 = setInterval(() => {
+			console.log('Inserting', stats.count, 'out of', stats.total, 'tiles')
+		}, 1000)
+
+		const proms = []
+
+		for (const tile of tiles) {
+			proms.push(
+				tileDb.findOneAndUpdate({
+					blockX: tile.blockX,
+					blockY: tile.blockY,
+					x: tile.x,
+					y: tile.y,
+				}, {
+					$set: {
+						...tile,
+					},
+					$unset: {
+						qudrants: '',
+						quadrants: '',
+					},
+				}, {
+					upsert: true,
+				}),
+			)
+			stats.count++
+		}
+
+		await Promise.all(proms)
+
+		clearInterval(inter2)
 	}
 
 }
 
-const quadrantColourData = async quadrant => {
+const generateMapFor = async block => {
+
+	const tileDb = await client.db(process.env.MONGODB_DB).collection('tiles')
+
+	await firstPass(tileDb, block)
+
+	await secondPass(tileDb, block)
+
+}
+
+const firstPass = async (tileDb, block) => {
+	const tiles = await tileDb.find({
+		blockX: block.x,
+		blockY: block.y,
+	}).toArray()
+
+	const colours = []
+	const tileSize = 16
+	const proms1 = []
+	// turn tiles into sprites
+	const cache = {}
+	for (const tile of tiles) {
+		cache[tile.blockX + '_' + tile.blockY + '_' + tile.x + '_' + tile.y] = tile
+	}
+
+	for (const tile of tiles) {
+
+		proms1.push(new Promise(async done => {
+			const proms2 = []
+			let tileToFind
+			if (tile.x === 0 && tile.y === 0) {
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y + 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x - 1,
+					blockY: block.y,
+					x: tileSize - 1,
+					y: 0,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x + 1,
+					y: 0,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y - 1,
+					x: 0,
+					y: tileSize - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+
+			} else if (tile.x === 0 && tile.y === tileSize - 1) {
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y + 1,
+					x: tile.x,
+					y: 0,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x - 1,
+					blockY: block.y,
+					x: tileSize - 1,
+					y: tileSize - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x + 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: 0,
+					y: tile.y - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+			} else if (tile.x === tileSize - 1 && tile.y === tileSize - 1) {
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y + 1,
+					x: tile.x,
+					y: 0,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x - 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x + 1,
+					blockY: block.y,
+					x: 0,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+			} else if (tile.x === tileSize - 1 && tile.y === 0) {
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tileSize - 1,
+					y: 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: 30,
+					y: 0,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x + 1,
+					blockY: block.y,
+					x: 0,
+					y: 0,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y - 1,
+					x: tileSize - 1,
+					y: tileSize - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+			} else if (tile.x === 0) {
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y + 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x - 1,
+					blockY: block.y,
+					x: tileSize - 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x + 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+			} else if (tile.y === tileSize - 1) {
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y + 1,
+					x: tile.x,
+					y: 0,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x - 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x + 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+			} else if (tile.x === tileSize - 1) {
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y + 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x - 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x + 1,
+					blockY: block.y,
+					x: 0,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+			} else if (tile.y === 0) {
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y + 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x - 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x + 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y - 1,
+					x: tile.x,
+					y: tileSize - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+			} else {
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y + 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x - 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x + 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+			}
+
+			const promsResults2 = await Promise.all(proms2)
+
+			const topMiddle = promsResults2[0]
+			const middleLeft = promsResults2[1]
+			const middleRight = promsResults2[2]
+			const bottomMiddle = promsResults2[3]
+
+			const grass = '112-192-160'
+			const sand = '216-200-128'
+			const tileColour = [grass, sand].includes(tile.colourData.highest) ? tile.colourData.highest : grass
+
+			const debug = false
+
+			if (debug) {
+				if (!colours.includes(tileColour.replace(/-/g, ', '))) {
+					colours.push(tileColour.replace(/-/g, ', '))
+				}
+
+				console.log(colours)
+			}
+
+			const topMiddleColour = topMiddle && [grass, sand].includes(topMiddle.colourData.highest) ? topMiddle.colourData.highest : grass
+			const middleLeftColour = middleLeft && [grass, sand].includes(middleLeft.colourData.highest) ? middleLeft.colourData.highest : grass
+			const middleRightColour = middleRight && [grass, sand].includes(middleRight.colourData.highest) ? middleRight.colourData.highest : grass
+			const bottomMiddleColour = bottomMiddle && [grass, sand].includes(bottomMiddle.colourData.highest) ? bottomMiddle.colourData.highest : grass
+
+			const surroundedByGrass = [
+				topMiddleColour,
+				middleLeftColour,
+				middleRightColour,
+				bottomMiddleColour,
+			].reduce((acc, colour) => colour === grass ? acc + 1 : acc) >= 3
+
+			if (
+				tileColour === grass
+			) {
+				tile.img = 'grass'
+			} else if (
+				surroundedByGrass
+				|| (topMiddleColour === grass && bottomMiddleColour === grass)
+				|| (middleLeftColour === grass && middleRightColour === grass)
+			) {
+				tile.img = 'grass'
+			} else if (
+				tileColour === sand
+				&& topMiddleColour === grass
+				&& middleLeftColour === grass
+				&& middleRightColour === sand
+				&& bottomMiddleColour === sand
+			) {
+				tile.img = 'sand-7'
+			} else if (
+				tileColour === sand
+				&& topMiddleColour === grass
+				&& middleLeftColour === sand
+				&& middleRightColour === sand
+				&& bottomMiddleColour === sand
+			) {
+				tile.img = 'sand-8'
+			} else if (
+				tileColour === sand
+				&& topMiddleColour === grass
+				&& middleLeftColour === sand
+				&& middleRightColour === grass
+				&& bottomMiddleColour === sand
+			) {
+				tile.img = 'sand-9'
+			} else if (
+				tileColour === sand
+				&& topMiddleColour === sand
+				&& middleLeftColour === grass
+				&& middleRightColour === sand
+				&& bottomMiddleColour === sand
+			) {
+				tile.img = 'sand-4'
+			} else if (
+				tileColour === sand
+				&& topMiddleColour === sand
+				&& middleLeftColour === sand
+				&& middleRightColour === sand
+				&& bottomMiddleColour === sand
+			) {
+				tile.img = 'sand-5'
+			} else if (
+				tileColour === sand
+				&& topMiddleColour === sand
+				&& middleLeftColour === sand
+				&& middleRightColour === grass
+				&& bottomMiddleColour === sand
+			) {
+				tile.img = 'sand-6'
+			} else if (
+				tileColour === sand
+				&& topMiddleColour === sand
+				&& middleLeftColour === grass
+				&& middleRightColour === sand
+				&& bottomMiddleColour === grass
+			) {
+				tile.img = 'sand-1'
+			} else if (
+				tileColour === sand
+				&& topMiddleColour === sand
+				&& middleLeftColour === sand
+				&& middleRightColour === sand
+				&& bottomMiddleColour === grass
+			) {
+				tile.img = 'sand-2'
+			} else if (
+				tileColour === sand
+				&& topMiddleColour === sand
+				&& middleLeftColour === sand
+				&& middleRightColour === grass
+				&& bottomMiddleColour === grass
+			) {
+				tile.img = 'sand-3'
+			}
+
+			await tileDb.updateOne({
+				_id: tile._id,
+			}, {
+				$set: tile,
+			})
+			done()
+
+		}))
+
+	}
+
+	await Promise.all(proms1)
+}
+
+const secondPass = async (tileDb, block) => {
+	const tiles = await tileDb.find({
+		blockX: block.x,
+		blockY: block.y,
+	}).toArray()
+
+	const colours = []
+	const tileSize = 16
+	// turn tiles into sprites
+
+	const proms1 = []
+
+	const cache = {}
+
+	for (const tile of tiles) {
+		cache[tile.blockX + '_' + tile.blockY + '_' + tile.x + '_' + tile.y] = tile
+	}
+
+	for (const tile of tiles) {
+		proms1.push(new Promise(async done => {
+			const proms2 = []
+			let tileToFind
+			if (tile.x === 0 && tile.y === 0) {
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y + 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x - 1,
+					blockY: block.y,
+					x: tileSize - 1,
+					y: 0,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x + 1,
+					y: 0,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y - 1,
+					x: 0,
+					y: tileSize - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+
+			} else if (tile.x === 0 && tile.y === tileSize - 1) {
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y + 1,
+					x: tile.x,
+					y: 0,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x - 1,
+					blockY: block.y,
+					x: tileSize - 1,
+					y: tileSize - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x + 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: 0,
+					y: tile.y - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+			} else if (tile.x === tileSize - 1 && tile.y === tileSize - 1) {
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y + 1,
+					x: tile.x,
+					y: 0,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x - 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x + 1,
+					blockY: block.y,
+					x: 0,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+			} else if (tile.x === tileSize - 1 && tile.y === 0) {
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tileSize - 1,
+					y: 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: 30,
+					y: 0,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x + 1,
+					blockY: block.y,
+					x: 0,
+					y: 0,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y - 1,
+					x: tileSize - 1,
+					y: tileSize - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+			} else if (tile.x === 0) {
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y + 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x - 1,
+					blockY: block.y,
+					x: tileSize - 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x + 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+			} else if (tile.y === tileSize - 1) {
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y + 1,
+					x: tile.x,
+					y: 0,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x - 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x + 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+			} else if (tile.x === tileSize - 1) {
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y + 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x - 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x + 1,
+					blockY: block.y,
+					x: 0,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+			} else if (tile.y === 0) {
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y + 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x - 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x + 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y - 1,
+					x: tile.x,
+					y: tileSize - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+			} else {
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y + 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x - 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x + 1,
+					y: tile.y,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+				tileToFind = {
+					blockX: block.x,
+					blockY: block.y,
+					x: tile.x,
+					y: tile.y - 1,
+				}
+				proms2.push(
+					cache[tileToFind.blockX + '_' + tileToFind.blockY + '_' + tileToFind.x + '_' + tileToFind.y]
+					|| tileDb.findOne(
+						tileToFind,
+					),
+				)
+			}
+
+			const promsResults2 = await Promise.all(proms2)
+
+			const topMiddle = promsResults2[0]
+			const middleLeft = promsResults2[1]
+			const middleRight = promsResults2[2]
+			const bottomMiddle = promsResults2[3]
+
+			const grass = 'grass'
+			const sands = ['sand-1', 'sand-2', 'sand-3', 'sand-4', 'sand-5', 'sand-6', 'sand-7', 'sand-8', 'sand-9']
+			const tileColour = [grass, ...sands].includes(tile.img) ? tile.img : grass
+
+			const debug = false
+
+			if (debug) {
+				if (!colours.includes(tileColour.replace(/-/g, ', '))) {
+					colours.push(tileColour.replace(/-/g, ', '))
+				}
+
+				console.log(colours)
+			}
+
+			const topMiddleColour = topMiddle && [grass, ...sands].includes(topMiddle.img) ? topMiddle.img : grass
+			const middleLeftColour = middleLeft && [grass, ...sands].includes(middleLeft.img) ? middleLeft.img : grass
+			const middleRightColour = middleRight && [grass, ...sands].includes(middleRight.img) ? middleRight.img : grass
+			const bottomMiddleColour = bottomMiddle && [grass, ...sands].includes(bottomMiddle.img) ? bottomMiddle.img : grass
+
+			const prevImg = tile.img
+
+			if (
+				tileColour === 'sand-2'
+				&& middleLeftColour === 'grass'
+			) {
+				tile.img = 'sand-1'
+			} else if (
+				tileColour === 'sand-8'
+				&& middleRightColour === 'grass'
+			) {
+				tile.img = 'sand-9'
+			}
+
+			if (prevImg !== tile.img) {
+				await tileDb.updateOne({
+					_id: tile._id,
+				}, {
+					$set: tile,
+				})
+			}
+
+			done()
+		}))
+
+	}
+
+	await Promise.all(proms1)
+}
+
+const colourData = async quadrant => {
 	const map = {}
 	const colours = await imageToRgbaMatrix(quadrant)
 	colours.forEach(x => {

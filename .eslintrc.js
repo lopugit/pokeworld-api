@@ -18,5 +18,6 @@ module.exports = {
 		'capitalized-comments': 'off',
 		complexity: 'off',
 		'max-depth': 'off',
+		'no-async-promise-executor': 'off',
 	},
 }

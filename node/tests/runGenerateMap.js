@@ -1,7 +1,7 @@
 require('dotenv').config()
 const { generateMap } = require('../functions.js')
 
-const c = 3
+const c = 9
 
 switch (c) {
 	// small area in Australia using lngs and lats
@@ -89,6 +89,31 @@ switch (c) {
 			mongodb: true,
 		})
 		break
+	case 8:
+		generateMap({
+			latStart: -37.877592466481524,
+			lngStart: 145.0015708922075,
+			latEnd: -37.875253765715094,
+			lngEnd: 145.0066361995029,
+			json: true,
+			html: true,
+			images: true,
+			mongodb: false,
+		})
+		break
+	case 9:
+		generateMap({
+			latStart: -37.87585861877495,
+			lngStart: 145.00549943855907,
+			latEnd: -37.8755029312655,
+			lngEnd: 145.0059446852365,
+			json: true,
+			html: true,
+			images: true,
+			mongodb: false,
+		})
+		break
+
 	default:
 		break
 }
