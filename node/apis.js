@@ -12,6 +12,53 @@ console.log('Connecting to MongoDB with url', url)
 const client = new MongoClient(url, { useNewUrlParser: true, useUnifiedTopology: true })
 const imageToRgbaMatrix = require('image-to-rgba-matrix');
 
+const v1BlockLatLng = async req => {
+
+	const { lng, lat } = req.query
+
+	if (
+		(typeof lng === 'number' && typeof lat === 'number')
+		|| (typeof lng === 'string' && typeof lat === 'string')
+
+	) {
+
+		const lngRounded = Math.floor(lng)
+		const latRounded = Math.floor(lat)
+
+		const lngs = lngsMap[lngRounded]
+		const lngFound = getLngFromLng(lng, lngs)
+
+		const lats = latsMap[latRounded]
+		const latFound = getLatFromLat(lat, lats)
+
+		const block = {
+			...lngFound,
+			...latFound,
+		}
+
+		if (!block.x && !block.y) {
+			return {
+				status: 400,
+				send: 'No block found',
+			}
+		}
+
+		return {
+			send: {
+				block,
+			},
+			status: 200,
+		}
+
+	}
+
+	return {
+		send: 'Latitude or Longitude is not a number',
+		status: 400,
+	}
+
+}
+
 const v1Block = async req => {
 
 	const { lng, lat, regenerate, skipTilesExtraction, blockX, blockY, deleteOldTiles } = req.query
@@ -51,8 +98,14 @@ const v1Block = async req => {
 		await generateBlocks(block, regenerate, skipTilesExtraction, deleteOldTiles)
 
 		const tiles = await tileDb.find({
-			blockX: block.x,
-			blockY: block.y,
+			$and: [
+				{
+					$or: [{ blockX: block.x }, { blockX: block.x - 1 }, { blockX: block.x + 1 }],
+				},
+				{
+					$or: [{ blockY: block.y }, { blockY: block.y - 1 }, { blockY: block.y + 1 }],
+				},
+			],
 		}).toArray()
 
 		return {
@@ -116,25 +169,17 @@ const generateBlocks = async (block, regenerate, skipTilesExtraction, deleteOldT
 		},
 	]
 
-	const stats = {
-		count: 0,
-	}
-
-	const inter1 = setInterval(() => {
-		console.log('Generating block tiles', stats.count, 'of', blocks.length)
-	}, 1000)
-
 	const proms = []
 
 	for (const block of blocks) {
-		stats.count++
 		proms.push(generateBlockTiles(block, regenerate, skipTilesExtraction))
 	}
 
 	await Promise.all(proms)
 
-	clearInterval(inter1)
-	stats.count = 0
+	const stats = {
+		count: 0,
+	}
 
 	const inter2 = setInterval(() => {
 		console.log('Generating block map', stats.count, 'of', blocks.length)
@@ -148,7 +193,7 @@ const generateBlocks = async (block, regenerate, skipTilesExtraction, deleteOldT
 	clearInterval(inter2)
 	stats.count = 0
 	const inter3 = setInterval(() => {
-		console.log('Reenerating block map', stats.count, 'of', blocks.length)
+		console.log('Regenerating block map', stats.count, 'of', blocks.length)
 	}, 1000)
 
 	for (const block of blocks) {
@@ -283,7 +328,9 @@ const generateTilesFor = async (block, exists, skipTilesExtraction, deleteOldTil
 					blockX: block.x,
 					blockY: block.y,
 					x: offsetX,
-					y: offsetY,
+					y: 15 - offsetY,
+					mapX: (block.x * 512) + (offsetX * 32),
+					mapY: (block.y * 512) + ((15 - offsetY) * 32),
 					image: tile,
 					colourData: await colourData(tile),
 				})
@@ -855,7 +902,7 @@ const firstPass = async (tileDb, block) => {
 				&& middleRightColour === sand
 				&& bottomMiddleColour === sand
 			) {
-				tile.img = 'sand-7'
+				tile.img = 'sand-1'
 			} else if (
 				tileColour === sand
 				&& topMiddleColour === grass
@@ -863,7 +910,7 @@ const firstPass = async (tileDb, block) => {
 				&& middleRightColour === sand
 				&& bottomMiddleColour === sand
 			) {
-				tile.img = 'sand-8'
+				tile.img = 'sand-2'
 			} else if (
 				tileColour === sand
 				&& topMiddleColour === grass
@@ -871,7 +918,7 @@ const firstPass = async (tileDb, block) => {
 				&& middleRightColour === grass
 				&& bottomMiddleColour === sand
 			) {
-				tile.img = 'sand-9'
+				tile.img = 'sand-3'
 			} else if (
 				tileColour === sand
 				&& topMiddleColour === sand
@@ -903,7 +950,7 @@ const firstPass = async (tileDb, block) => {
 				&& middleRightColour === sand
 				&& bottomMiddleColour === grass
 			) {
-				tile.img = 'sand-1'
+				tile.img = 'sand-7'
 			} else if (
 				tileColour === sand
 				&& topMiddleColour === sand
@@ -911,7 +958,7 @@ const firstPass = async (tileDb, block) => {
 				&& middleRightColour === sand
 				&& bottomMiddleColour === grass
 			) {
-				tile.img = 'sand-2'
+				tile.img = 'sand-8'
 			} else if (
 				tileColour === sand
 				&& topMiddleColour === sand
@@ -919,7 +966,7 @@ const firstPass = async (tileDb, block) => {
 				&& middleRightColour === grass
 				&& bottomMiddleColour === grass
 			) {
-				tile.img = 'sand-3'
+				tile.img = 'sand-9'
 			}
 
 			await tileDb.updateOne({
@@ -1440,6 +1487,16 @@ const secondPass = async (tileDb, block) => {
 				&& middleRightColour === 'grass'
 			) {
 				tile.img = 'sand-9'
+			} else if (
+				tileColour === 'sand-2'
+				&& middleRightColour === 'grass'
+			) {
+				tile.img = 'sand-3'
+			} else if (
+				tileColour === 'sand-8'
+				&& middleLeftColour === 'grass'
+			) {
+				tile.img = 'sand-7'
 			}
 
 			if (prevImg !== tile.img) {
@@ -1481,4 +1538,5 @@ const colourData = async quadrant => {
 
 module.exports = {
 	v1Block,
+	v1BlockLatLng,
 }

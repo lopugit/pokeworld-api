@@ -33,6 +33,14 @@ app.get('/v1/block', async (req, res) => {
 		res.status(400).send('Something went wrong')
 	}
 })
+app.get('/v1/blockLatLng', async (req, res) => {
+	const resp = await apis.v1BlockLatLng(req)
+	if (resp) {
+		res.status(resp.status).send(resp.send)
+	} else {
+		res.status(400).send('Something went wrong')
+	}
+})
 
 app.get('/privacy-policy', async (req, res) => res.status(200).send(pug.compile(`
 .privacy-policy(
