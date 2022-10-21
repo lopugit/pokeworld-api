@@ -50,7 +50,7 @@ const generateMap = ({
 	let map
 	try {
 		const url = `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGODB_PWD}@${process.env.MONGODB_CLUSTER}.nhb33.mongodb.net/${process.env.MONGODB_DB}?retryWrites=true&w=majority`
-		console.log('Connecting to MongoDB with url', url)
+		console.log('Connecting to MongoDB with url')
 		const client = new MongoClient(url, { useNewUrlParser: true, useUnifiedTopology: true })
 
 		// Connect to client
@@ -301,7 +301,7 @@ async function generateCoordinatesGrid({
 	let map
 	try {
 		const url = `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGODB_PWD}@${process.env.MONGODB_CLUSTER}.nhb33.mongodb.net/${process.env.MONGODB_DB}?retryWrites=true&w=majority`
-		console.log('Connecting to MongoDB with url', url)
+		console.log('Connecting to MongoDB with url')
 		const client = new MongoClient(url, { useNewUrlParser: true, useUnifiedTopology: true })
 
 		// Connect to client

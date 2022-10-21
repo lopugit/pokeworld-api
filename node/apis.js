@@ -8,7 +8,7 @@ const functions = require('./functions.js')
 const { MongoClient } = require('mongodb')
 const sharp = require('sharp')
 const url = `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGODB_PWD}@${process.env.MONGODB_CLUSTER}.nhb33.mongodb.net/${process.env.MONGODB_DB}?retryWrites=true&w=majority`
-console.log('Connecting to MongoDB with url', url)
+console.log('Connecting to MongoDB')
 const client = new MongoClient(url, { useNewUrlParser: true, useUnifiedTopology: true })
 const imageToRgbaMatrix = require('image-to-rgba-matrix');
 
