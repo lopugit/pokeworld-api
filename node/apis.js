@@ -14,6 +14,8 @@ const imageToRgbaMatrix = require('image-to-rgba-matrix');
 
 const v1BlockLatLng = async req => {
 
+	console.log('v1BlockLatLng Getting block from lat lng')
+
 	const { lng, lat } = req.query
 
 	if (
@@ -61,6 +63,8 @@ const v1BlockLatLng = async req => {
 
 const v1Block = async req => {
 
+	console.log('v1Block getting block')
+
 	const { lng, lat, regenerate, skipTilesExtraction, blockX, blockY, deleteOldTiles } = req.query
 
 	if (
@@ -72,7 +76,6 @@ const v1Block = async req => {
 
 		await client.connect()
 		const tileDb = await client.db(process.env.MONGODB_DB).collection('tiles')
-		const blockDb = await client.db(process.env.MONGODB_DB).collection('blocks')
 
 		const lngRounded = Math.floor(lng)
 		const latRounded = Math.floor(lat)
@@ -108,6 +111,8 @@ const v1Block = async req => {
 			],
 		}).toArray()
 
+		console.log('v1Block done, returning')
+
 		return {
 			send: {
 				tiles,
@@ -125,7 +130,9 @@ const v1Block = async req => {
 
 }
 
-const generateBlocks = async (block, regenerate, skipTilesExtraction, deleteOldTiles) => {
+const generateBlocks = async (block, regenerate, skipTilesExtraction) => {
+
+	const blockDb = await client.db(process.env.MONGODB_DB).collection('blocks')
 
 	const lngs = lngsDb
 	const lats = latsDb
@@ -169,6 +176,25 @@ const generateBlocks = async (block, regenerate, skipTilesExtraction, deleteOldT
 		},
 	]
 
+	for (const block of blocks) {
+		const dbBlock = await blockDb.findOne({ x: block.x, y: block.y })
+		if (!dbBlock) {
+			await blockDb.insertOne({
+				...block,
+				passes: 0,
+			})
+		} else if ((!dbBlock.passes && dbBlock.passes !== 0) || typeof dbBlock.passes !== 'number' || isNaN(dbBlock.passes)) {
+			await blockDb.updateOne({
+				x: block.x,
+				y: block.y,
+			}, {
+				$set: {
+					passes: 0,
+				},
+			})
+		}
+	}
+
 	const proms = []
 
 	for (const block of blocks) {
@@ -187,7 +213,7 @@ const generateBlocks = async (block, regenerate, skipTilesExtraction, deleteOldT
 
 	for (const block of blocks) {
 		stats.count++
-		await generateBlockMap(block, regenerate, skipTilesExtraction)
+		await generateBlockTileSprites(block, regenerate, 1)
 	}
 
 	clearInterval(inter2)
@@ -198,42 +224,10 @@ const generateBlocks = async (block, regenerate, skipTilesExtraction, deleteOldT
 
 	for (const block of blocks) {
 		stats.count++
-		await generateBlockMap(block, regenerate, true)
+		await generateBlockTileSprites(block, regenerate, 2)
 	}
 
 	clearInterval(inter3)
-
-}
-
-const generateBlockMap = async (block, regenerate, skipTilesExtraction, deleteOldTiles) => {
-
-	const blockDb = await client.db(process.env.MONGODB_DB).collection('blocks')
-
-	console.log('Generating block', block.x, block.y)
-
-	// query mongodb for map
-	let blockDbObject = await blockDb.findOne({
-		x: block.x,
-		y: block.y,
-	})
-
-	if (blockDbObject) {
-		// handle if map exists
-	} else {
-		// handle if map doesn't exist
-		// generate google maps base map
-		await generateMapFor(block, false, skipTilesExtraction, deleteOldTiles)
-
-	}
-
-	blockDbObject = blockDbObject || await blockDb.findOne({
-		x: block.x,
-		y: block.y,
-	})
-
-	if (blockDbObject && regenerate) {
-		await generateMapFor(block, true, skipTilesExtraction, deleteOldTiles)
-	}
 
 }
 
@@ -243,28 +237,53 @@ const generateBlockTiles = async (block, regenerate, skipTilesExtraction, delete
 
 	console.log('Generating block', block.x, block.y)
 
-	// query mongodb for map
-	let blockDbObject = await blockDb.findOne({
+	// query mongodb for block
+	const blockDbObject = await blockDb.findOne({
 		x: block.x,
 		y: block.y,
 	})
 
-	if (blockDbObject) {
-		// handle if map exists
-	} else {
-		// handle if map doesn't exist
-		// generate google maps base map
+	if (!blockDbObject.tilesGenerated || regenerate) {
+		// handle if block doesn't exist
 		await generateTilesFor(block, false, skipTilesExtraction, deleteOldTiles)
+
+		blockDb.updateOne({
+			x: block.x,
+			y: block.y,
+		}, {
+			$set: {
+				tilesGenerated: true,
+				passes: 0,
+			},
+		})
 
 	}
 
-	blockDbObject = blockDbObject || await blockDb.findOne({
+}
+
+const generateBlockTileSprites = async (block, regenerate, passes = 1) => {
+
+	const blockDb = await client.db(process.env.MONGODB_DB).collection('blocks')
+
+	console.log('Generating block', block.x, block.y)
+
+	const blockDbObj = await blockDb.findOne({
 		x: block.x,
 		y: block.y,
 	})
 
-	if (blockDbObject && regenerate) {
-		await generateTilesFor(block, true, skipTilesExtraction, deleteOldTiles)
+	if (blockDbObj.passes < passes || regenerate) {
+		await generateMapFor(block)
+		if (blockDbObj.passes < 2) {
+			await blockDb.updateOne({
+				x: block.x,
+				y: block.y,
+			}, {
+				$set: {
+					passes,
+				},
+			})
+		}
 	}
 
 }
@@ -274,30 +293,23 @@ const getLatFromBlock = (blockY, lats) => lats.reduce((acc, tmpLat) => blockY > 
 const getLngFromLng = (lng, lngs) => lngs.reduce((acc, tmpLng) => lng > acc.lng ? tmpLng : acc, { lng: -180 })
 const getLatFromLat = (lat, lats) => lats.reduce((acc, tmpLat) => lat > acc.lat ? tmpLat : acc, { lat: -90 })
 
-const generateTilesFor = async (block, exists, skipTilesExtraction, deleteOldTiles) => {
+const generateTilesFor = async (block, skipTilesExtraction, deleteOldTiles) => {
 	const tileDb = await client.db(process.env.MONGODB_DB).collection('tiles')
 	const blockDb = await client.db(process.env.MONGODB_DB).collection('blocks')
 
-	const googleMap = await functions.getMapAt(block.lat, block.lng, 19)
+	const googleMap = await functions.getMapAt(block.lat, block.lng, 20)
 
-	if (exists) {
-		await blockDb.findOneAndUpdate(
-			{
-				x: block.x,
-				y: block.y,
+	await blockDb.findOneAndUpdate(
+		{
+			x: block.x,
+			y: block.y,
+		},
+		{
+			$set: {
+				...block,
+				googleMap,
 			},
-			{
-				$set: {
-					...block,
-					googleMap,
-				},
-			})
-	} else {
-		await blockDb.insertOne({
-			...block,
-			googleMap,
 		})
-	}
 
 	if (!skipTilesExtraction) {
 
