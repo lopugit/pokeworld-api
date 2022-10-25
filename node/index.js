@@ -1,8 +1,10 @@
 require('dotenv').config()
 const bodyParser = require('body-parser')
+const compression = require('compression')
 const express = require('express')
 const cors = require('cors')
 const app = express()
+app.use(compression())
 app.use(bodyParser.json())
 const port = process.env.PORT
 const axios = require('axios')
@@ -27,6 +29,7 @@ app.get('/', (req, res) => {
 
 app.get('/v1/block', async (req, res) => {
 	const resp = await apis.v1Block(req)
+	console.log('Done v1 block')
 	if (resp) {
 		res.status(resp.status).send(resp.send)
 	} else {
@@ -67,5 +70,5 @@ style(type="text/css").
 `)()))
 
 app.listen(port, () => {
-	console.log(`Example app listening at http://localhost:${port}`)
+	console.log(`Pokemon World listening at http://localhost:${port}`)
 })

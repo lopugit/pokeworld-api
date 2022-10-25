@@ -19,5 +19,7 @@ module.exports = {
 		complexity: 'off',
 		'max-depth': 'off',
 		'no-async-promise-executor': 'off',
+		'default-param-last': 'off',
+		'max-params': 'off',
 	},
 }

@@ -49,7 +49,7 @@ const generateMap = ({
 	let cacheCollection
 	let map
 	try {
-		const url = `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGODB_PWD}@${process.env.MONGODB_CLUSTER}.nhb33.mongodb.net/${process.env.MONGODB_DB}?retryWrites=true&w=majority`
+		const url = `${process.env.MONGODB_SCHEME}${process.env.MONGODB_USER}:${process.env.MONGODB_PWD}@${process.env.MONGODB_URL}/${process.env.MONGODB_DB}?retryWrites=true&w=majority${process.env.MONGODB_URL_PARAMS}`
 		console.log('Connecting to MongoDB with url')
 		const client = new MongoClient(url, { useNewUrlParser: true, useUnifiedTopology: true })
 
@@ -279,7 +279,7 @@ async function getMapAt(lat, lng, zoom = 20) {
 		},
 	})
 		.catch(err => {
-			console.error('Error fetching image data', err.response.statusText)
+			console.error('Error fetching image data', err, err?.response?.statusText)
 		})
 
 	if (get(response, 'data')) {
@@ -300,7 +300,7 @@ async function generateCoordinatesGrid({
 	let cacheCollection
 	let map
 	try {
-		const url = `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGODB_PWD}@${process.env.MONGODB_CLUSTER}.nhb33.mongodb.net/${process.env.MONGODB_DB}?retryWrites=true&w=majority`
+		const url = `${process.env.MONGODB_SCHEME}${process.env.MONGODB_USER}:${process.env.MONGODB_PWD}@${process.env.MONGODB_URL}/${process.env.MONGODB_DB}?retryWrites=true&w=majority${process.env.MONGODB_URL_PARAMS}`
 		console.log('Connecting to MongoDB with url')
 		const client = new MongoClient(url, { useNewUrlParser: true, useUnifiedTopology: true })
 
