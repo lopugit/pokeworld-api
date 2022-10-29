@@ -19,7 +19,7 @@ test(false, 'v1 block returns map at longitude latitude', async () => {
 })
 
 // test v1 block
-test(false, 'v1 block returns map at longitude latitude', async () => {
+test(true, 'v1 block returns map at longitude latitude', async () => {
 	const startTime = Date.now()
 	const resp = await apis.v1Block({
 		query: {
@@ -65,7 +65,7 @@ test(false, 'v1 block returns map at longitude latitude', async () => {
 })
 
 // test v1 block load http
-test(true, 'v1 block http request returns 5 block requests in good time', async () => {
+test(false, 'v1 block http request returns 5 block requests in good time', async () => {
 	const startTime = Date.now()
 	const proms = []
 	const count = 5

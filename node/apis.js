@@ -12,6 +12,16 @@ console.log('Connecting to MongoDB')
 const client = new MongoClient(url, { useNewUrlParser: true, useUnifiedTopology: true })
 const imageToRgbaMatrix = require('image-to-rgba-matrix');
 
+const transactions = {
+	current: undefined,
+}
+
+const transactionOptions = {
+	readPreference: 'primary',
+	readConcern: { level: 'local' },
+	writeConcern: { w: 'majority' },
+}
+
 const { v4: uuidv4 } = require('uuid')
 
 const v1BlockLatLng = async req => {
@@ -63,6 +73,69 @@ const v1BlockLatLng = async req => {
 
 }
 
+const v1BatchBlocks = async req => {
+
+	console.log('v1BatchBlocks Getting blocks from lat/lng blockX/blockY')
+
+	const { offsets, blockX, blockY, regenerate } = req.query
+
+	if (
+		(
+			(typeof blockX === 'number' && typeof blockY === 'number')
+			|| (typeof blockX === 'string' && typeof blockY === 'string')
+		) && offsets instanceof Array
+	) {
+
+		const responses = []
+
+		for (const offsetRaw of offsets) {
+			const offset = JSON.parse(offsetRaw)
+			const newReq = {
+				query: {
+					regenerate: Boolean(regenerate === true || regenerate === 'true'),
+					blockX: Number(blockX) + offset[0],
+					blockY: Number(blockY) + offset[1],
+				},
+			}
+			responses.push(v1Block(newReq))
+		}
+
+		const resps = await Promise.all(responses)
+		const tiles = []
+		const blocks = []
+		for (const resp of resps) {
+			if (resp?.send?.tiles) {
+				for (const tile of resp.send.tiles) {
+					const index = tiles.findIndex(t => t.mapX === tile.mapX && t.mapY === tile.mapY)
+					if (index === -1) {
+						tiles.push(tile)
+					} else if (index >= 0 && (tiles[index].updated < tile.updated || !tiles[index].updated)) {
+						tiles[index] = tile
+					}
+				}
+			}
+
+			if (resp?.send?.block) {
+				blocks.push(resp.send.block)
+			}
+		}
+
+		return {
+			send: {
+				tiles,
+				blocks,
+			},
+			status: 200,
+		}
+	}
+
+	return {
+		send: 'Block X or Block Y is not a number or offsets is not an array',
+		status: 400,
+	}
+
+}
+
 const v1Block = async req => {
 
 	console.log('v1Block getting block')
@@ -77,6 +150,8 @@ const v1Block = async req => {
 	) {
 
 		await client.connect()
+		const session = client.startSession();
+
 		const tileDb = await client.db(process.env.MONGODB_DB).collection('tiles')
 		const blockDb = await client.db(process.env.MONGODB_DB).collection('blocks')
 
@@ -101,129 +176,100 @@ const v1Block = async req => {
 			}
 		}
 
-		const blocks = []
+		const blocks = {}
 		const blockCache = {}
-		const tileCache = {}
 
 		await generateLogicalBlocks(block, blocks, blockCache)
 
-		const blockXs = blocks.map(block => block.x)
-		const blockYs = blocks.map(block => block.y)
+		const lockId = uuidv4()
 
-		const dbTilesTmp = await tileDb.find({
-			$and: [
-				{
-					$or: blockXs.map(blockX => ({ blockX })),
-				},
-				{
-					$or: blockYs.map(blockY => ({ blockY })),
-				},
-			],
-		}).toArray()
+		// get existing tiles
+		const tileCache = {}
 
-		const tileBlocks = {}
+		const dbTiles = blocks.middle.tiles || []
 
-		dbTilesTmp.forEach(tile => {
-			tileBlocks[`${tile.blockX},${tile.blockY}`] = true
-			tileCache[tile.mapX + ',' + tile.mapY] = tile
-		})
+		for (const tile of dbTiles) {
+			tileCache[`${tile.mapX},${tile.mapY}`] = tile
+		}
 
-		let done = false
+		let generationRequired = false
 
-		blocks.forEach(block => {
-			if (!done && !tileBlocks[`${block.x},${block.y}`]) {
-				done = true
-				blocks.forEach(b => {
-					b.needsTiles = true
-				})
-			}
-		})
+		if (dbTiles.length < (16 * 16) || regenerate) {
+			generationRequired = true
+			console.log('Generation required for block', blocks.middle.x, blocks.middle.y)
+			// wait for write lock on blocks
+			await new Promise(async resolve => {
+				const blockWriteLockInterval = setInterval(async () => {
+					if (!transactions.current) {
+						transactions.current = true
+						await session.withTransaction(async () => {
+							const dbBlocks = await blockDb.find({
+								$or: Object.values(blocks).map(block => ({ x: block.x, y: block.y })),
+							}).toArray()
+							const writeable = dbBlocks.every(block => !block.lockId || (Date.now() - block.lockDate > 1000 * 60))
+							if (writeable) {
+								clearInterval(blockWriteLockInterval)
+								const proms = []
+								const lockDate = Date.now()
+								for (const block of Object.values(blocks)) {
+									block.lockId = lockId
+									block.lockDate = lockDate
+									delete block.tiles
+									proms.push(
+										blockDb.findOneAndUpdate({
+											x: block.x,
+											y: block.y,
+										}, {
+											$set: {
+												...block,
+											},
+										}, {
+											upsert: true,
+										}),
+									)
+								}
 
-		const someNeedTiles = blocks.some(block => block.needsTiles)
-		if (regenerate || someNeedTiles) {
-			await checkBlocksWriteable(blocks)
-
-			const dbTilesTmp = await tileDb.find({
-				$and: [
-					{
-						$or: blockXs.map(blockX => ({ blockX })),
-					},
-					{
-						$or: blockYs.map(blockY => ({ blockY })),
-					},
-				],
-			}).toArray()
-
-			const tileBlocks = {}
-
-			dbTilesTmp.forEach(tile => {
-				tileBlocks[`${tile.blockX},${tile.blockY}`] = true
-				tileCache[tile.mapX + ',' + tile.mapY] = tile
+								await Promise.all(proms)
+								resolve()
+							}
+						}, transactionOptions)
+						transactions.current = false
+					}
+				}, 100)
 			})
 
-			let done = false
+			await generateLogicalBlocks(block, blocks, blockCache)
 
-			blocks.forEach(block => {
-				block.needsTiles = false
-			})
-
-			blocks.forEach(block => {
-				if (!done && !tileBlocks[`${block.x},${block.y}`]) {
-					done = true
-					blocks.forEach(b => {
-						b.needsTiles = true
-					})
+			for (const block of Object.values(blocks)) {
+				for (const tile of block.tiles || []) {
+					tileCache[`${tile.mapX},${tile.mapY}`] = tile
 				}
-			})
-
-		}
-
-		await generateBlocks(block, blocks, regenerate, skipTilesExtraction, tileCache)
-
-		const tiles = []
-
-		for (const tile of Object.values(tileCache)) {
-			if (blockXs.includes(tile.blockX) && blockYs.includes(tile.blockY)) {
-				tiles.push(tile)
 			}
+
+			await generateBlock(blocks, regenerate, skipTilesExtraction, tileCache)
 		}
 
-		if (tiles.some(tile => tile.needsSaving)) {
-			console.log('Saving tiles')
-			for (const tile of tiles) {
-				if (tile.needsSaving) {
-					delete tile.needsSaving
-					tileDb.findOneAndUpdate({
-						mapX: tile.mapX,
-						mapY: tile.mapY,
-					}, {
-						$set: {
-							...tile,
-						},
-						$unset: {
-							needsSaving: '',
-						},
-					}, {
-						upsert: true,
-					})
+		const saveProms = []
+
+		const tiles = Object.values(tileCache)
+
+		if (generationRequired) {
+
+			const saveStartTime = Date.now()
+
+			if (Object.values(blocks).some(block => block.needsSaving)) {
+				console.log('Saving blocks', Date.now())
+			}
+
+			for (const block of Object.values(blocks)) {
+				delete block.needsSaving
+				delete block.needsSprites
+				const tilesToSave = tiles.filter(tile => tile.blockX === block.x && tile.blockY === block.y)
+				if (tilesToSave.length === 256) {
+					block.tiles = tilesToSave
 				}
 
-				delete tile.x
-				delete tile.y
-				delete tile.blockX
-				delete tile.blockY
-				delete tile.colourData
-				delete tile._id
-			}
-		}
-
-		if (blocks.some(block => block.needsSaving)) {
-			console.log('Saving blocks')
-			for (const block of blocks) {
-				if (block.needsSaving) {
-					delete block.needsSaving
-					delete block.needsTiles
-					block.writeable = true
+				saveProms.push(
 					blockDb.findOneAndUpdate({
 						x: block.x,
 						y: block.y,
@@ -233,18 +279,65 @@ const v1Block = async req => {
 						},
 						$unset: {
 							needsSaving: '',
-							needsTiles: '',
+							needsSprites: '',
 						},
 					}, {
 						upsert: true,
-					})
-				}
+					}),
+				)
 			}
+
+			const saveAndUnlockInterval = setInterval(async () => {
+				if (!transactions.current) {
+					transactions.current = true
+					clearInterval(saveAndUnlockInterval)
+					await session.withTransaction(async () => {
+						await Promise.all(saveProms)
+						const saveEndTime = Date.now()
+						console.log('Took', (saveEndTime - saveStartTime) / 1000, 's to save')
+						try {
+							const dbBlocks = await blockDb.find({
+								$or: Object.values(blocks).map(block => ({ x: block.x, y: block.y })),
+							}).toArray()
+							const writeable = dbBlocks.every(block => block.lockId === lockId || (Date.now() - block.lockDate > 1000 * 60))
+							if (writeable) {
+								const proms = []
+								const lockDate = Date.now()
+								for (const block of Object.values(blocks)) {
+									block.lockId = lockId
+									block.lockDate = lockDate
+									proms.push(
+										blockDb.findOneAndUpdate({
+											x: block.x,
+											y: block.y,
+										}, {
+											$unset: {
+												lockId: '',
+												lockData: '',
+											},
+										}, {
+											upsert: true,
+										}),
+									)
+								}
+
+								await Promise.all(proms)
+							}
+						} finally {
+							// session.endSession()
+							// client.close()
+						}
+
+					}, transactionOptions)
+					transactions.current = false
+				}
+			}, 100)
 		}
 
 		return {
 			send: {
 				tiles,
+				block: blocks.middle,
 			},
 			status: 200,
 		}
@@ -264,45 +357,30 @@ const generateLogicalBlocks = async (block, blocks, blockCache) => {
 	const lngs = lngsDb
 	const lats = latsDb
 
-	const resolution = 1
-
 	const blockOffsets = [
-		[0, 0],
-		[0, 1],
-		[1, 0],
-		[-1, 0],
-		[0, -1],
-		[1, 1],
-		[-1, -1],
-		[1, -1],
-		[-1, 1],
+		[0, 0, 'middle'],
+		[0, 1, 'top'],
+		[1, 0, 'right'],
+		[-1, 0, 'left'],
+		[0, -1, 'bottom'],
+		[-1, 1, 'topLeft'],
+		[1, 1, 'topRight'],
+		[1, -1, 'bottomRight'],
+		[-1, -1, 'bottomLeft'],
 	]
 
-	if (resolution >= 2) {
-		blockOffsets.push(...[
-			[2, 0],
-			[0, 2],
-			[-2, 0],
-			[0, -2],
-			[1, 2],
-			[2, 1],
-			[-1, -2],
-			[-2, -1],
-			[2, -1],
-			[1, -2],
-			[-2, 1],
-			[-1, 2],
-		])
-	}
-
-	blocks.push(
-		...blockOffsets.map(offset => ({
+	blockOffsets.forEach(offset => {
+		blocks[offset[2]] = {
 			...getLngFromBlock(block.x + offset[0], lngs),
 			...getLatFromBlock(block.y - offset[1], lats),
-		})),
-	)
+		}
+		blocks[offset[2]].mapX = blocks[offset[2]].x * 512
+		blocks[offset[2]].mapY = blocks[offset[2]].y * 512
+		blocks[offset[2]].uuid = uuidv4()
+	})
+
 	const proms = []
-	for (const block of blocks) {
+	for (const block of Object.values(blocks)) {
 		proms.push(blockDb.findOne({
 			x: block.x,
 			y: block.y,
@@ -312,141 +390,33 @@ const generateLogicalBlocks = async (block, blocks, blockCache) => {
 
 	const dbBlocks = await Promise.all(proms)
 
-	dbBlocks.forEach((dbBlock, idx) => {
-		if (dbBlock) {
-			Object.assign(blocks[idx], dbBlock)
+	Object.keys(blocks).forEach((key, i) => {
+		if (dbBlocks[i]) {
+			Object.assign(blocks[key], dbBlocks[i])
 		}
 	})
 
 }
 
-const checkBlocksWriteable = async blocks => {
-	const blockDb = await client.db(process.env.MONGODB_DB).collection('blocks')
-	return new Promise(async resolve => {
-		const blockInterval = setInterval(async () => {
-			console.log('Waiting for blocks', blocks[0].x, ',', blocks[0].y)
-			for (const block of blocks) {
-				const dbBlock = await blockDb.findOne({
-					x: block.x,
-					y: block.y,
-				})
-				block.dbBlock = dbBlock
-				if (dbBlock && dbBlock.writeable) {
-					block.writeable = true
-				} else if (
-					!dbBlock
-					|| typeof dbBlock.writeable === 'undefined'
-					|| (!dbBlock.lastWritten || Date.now() - dbBlock.lastWritten > (1000 * 20))
-				) {
-					block.writeable = true
-				}
-			}
+const generateBlock = async (blocks, regenerate, skipTilesExtraction, tileCache) => {
 
-			if (blocks.every(block => block.writeable)) {
-				const proms = []
-				for (const block of blocks) {
-					proms.push(blockDb.findOneAndUpdate({
-						x: block.x,
-						y: block.y,
-					}, {
-						$set: {
-							x: block.x,
-							y: block.y,
-							lastWritten: Date.now(),
-							writeable: false,
-						},
-					}, {
-						upsert: true,
-					}),
-					)
-					block.writeable = false
-					block.needsSaving = true
-					Object.assign(block, block.dbBlock)
-					delete block.dbBlock
-				}
+	// generate tiles
+	console.log('Generating colour data for block', blocks.middle.x, blocks.middle.y)
+	await generateBlockColourData(blocks.middle, skipTilesExtraction, false, tileCache)
+	console.log('Generated colour data for block', blocks.middle.x, blocks.middle.y)
 
-				await Promise.all(proms)
-
-				clearInterval(blockInterval)
-				resolve()
-			}
-		}, 1000)
-	})
-}
-
-const generateBlocks = async (block, blocks, regenerate, skipTilesExtraction, tileCache) => {
-
-	let minPasses = Infinity
-
-	for (const block of blocks) {
-		if (!block?.passes) {
-			minPasses = 0
-		} else if (block?.passes < minPasses) {
-			minPasses = block?.passes
-		}
-	}
-
-	const proms = []
-
-	for (const block of blocks) {
-		// maybe generate block tiles
-		proms.push(maybeGenerateBlockTiles(block, block.needsTiles || regenerate, skipTilesExtraction, false, tileCache))
-	}
-
-	await Promise.all(proms)
-
-	const stats = {
-		count: 0,
-	}
-
-	const inter2 = setInterval(() => {
-		console.log('Maybe generating block tile sprites', stats.count, 'of', blocks.length)
-	}, 1000)
-
-	const proms1 = []
-
-	for (const block of blocks) {
-		stats.count++
-		proms1.push(maybeGenerateBlockTileSprites(block, minPasses < 1 || block.needsTiles || regenerate, tileCache, 1))
-	}
-
-	await Promise.all(proms1)
-
-	clearInterval(inter2)
-
-	stats.count = 0
-	const inter3 = setInterval(() => {
-		console.log('Maybe regenerating block tile sprites', stats.count, 'of', blocks.length)
-	}, 1000)
-
-	const proms2 = []
-
-	for (const block of blocks) {
-		stats.count++
-		proms2.push(maybeGenerateBlockTileSprites(block, minPasses < 2 || block.needsTiles || regenerate, tileCache, 2))
-	}
-
-	await Promise.all(proms2)
-
-	clearInterval(inter3)
+	// generate sprites
+	await generateSpritesFor(blocks.middle, tileCache)
 
 }
 
-const maybeGenerateBlockTiles = async (block, regenerate, skipTilesExtraction, deleteOldTiles, tileCache) => {
+const generateBlockColourData = async (block, skipTilesExtraction, deleteOldTiles, tileCache) => {
 
-	if (!block.tilesGenerated || regenerate) {
-		console.log('Generating block tile colour data', block.x, block.y)
-		// handle if block doesn't exist
-		await generateTilesFor(block, skipTilesExtraction, deleteOldTiles, tileCache)
-
-	}
-
-}
-
-const generateTilesFor = async (block, skipTilesExtraction, deleteOldTiles, tileCache) => {
 	const tileDb = await client.db(process.env.MONGODB_DB).collection('tiles')
 
 	const googleMap = await functions.getMapAt(block.lat, block.lng, 20)
+
+	block.googleMap = googleMap.toString('base64')
 
 	if (!skipTilesExtraction) {
 
@@ -501,6 +471,7 @@ const generateTilesFor = async (block, skipTilesExtraction, deleteOldTiles, tile
 		}, 1000)
 
 		const tiles = []
+		const updated = Date.now()
 		for (let offsetX = 0; offsetX < 512 / 32; offsetX++) {
 			for (let offsetY = 0; offsetY < 512 / 32; offsetY++) {
 				tiles.push({
@@ -509,6 +480,7 @@ const generateTilesFor = async (block, skipTilesExtraction, deleteOldTiles, tile
 					x: offsetX,
 					y: 15 - offsetY,
 					uuid: uuidv4(),
+					updated,
 					needsSaving: true,
 					mapX: (block.x * 512) + (offsetX * 32),
 					mapY: (block.y * 512) + ((15 - offsetY) * 32),
@@ -520,39 +492,11 @@ const generateTilesFor = async (block, skipTilesExtraction, deleteOldTiles, tile
 
 		clearInterval(inter)
 
-		stats.count = 0
-		stats.total = tiles.length
-
-		const inter2 = setInterval(() => {
-			console.log('Inserting', stats.count, 'out of', stats.total, 'tiles')
-		}, 1000)
-
-		// const proms = []
-
 		for (const tile of tiles) {
 			tileCache[tile.mapX + ',' + tile.mapY] = tile
 			stats.count++
 		}
 
-		clearInterval(inter2)
-
-		block.tilesGenerated = true
-		block.needsSaving = true
-	}
-
-}
-
-const maybeGenerateBlockTileSprites = async (block, regenerate, tileCache, passes = 1) => {
-
-	if (!block?.passes || block.passes < passes || regenerate) {
-		console.log('Generating block tile sprites', block.x, block.y)
-		await generateTileSpritesFor(block, tileCache)
-		if (!block.passes || block.passes < 2) {
-			block.needsSaving = true
-			block.passes = passes
-		}
-	} else {
-		console.log('Block tile sprites already generated, pass:', passes)
 	}
 
 }
@@ -562,64 +506,46 @@ const getLatFromBlock = (blockY, lats) => lats.reduce((acc, tmpLat) => blockY > 
 const getLngFromLng = (lng, lngs) => lngs.reduce((acc, tmpLng) => lng > acc.lng ? tmpLng : acc, { lng: -180 })
 const getLatFromLat = (lat, lats) => lats.reduce((acc, tmpLat) => lat > acc.lat ? tmpLat : acc, { lat: -90 })
 
-const generateTileSpritesFor = async (block, tileCache) => {
+const generateSpritesFor = async (block, tileCache) => {
 
-	const tileDb = await client.db(process.env.MONGODB_DB).collection('tiles')
+	console.log('Generating sprites for block', block.x, block.y)
 
-	await firstPass(tileDb, block, tileCache)
+	await firstPass(block, tileCache)
 
-	// await secondPass(tileDb, block, tileCache)
+	console.log('First pass complete for block', block.x, block.y)
+
+	await secondPass(block, tileCache)
+
+	console.log('Second pass complete for block', block.x, block.y)
 
 }
 
-const firstPass = async (tileDb, block, tileCache) => {
+const firstPass = async (block, tileCache) => {
 
 	const colours = []
 
-	const proms = []
+	const updated = Date.now()
 
 	// turn tiles into sprites
-	for (let offsetX = 0; offsetX < 512 / 32; offsetX++) {
-		for (let offsetY = 0; offsetY < 512 / 32; offsetY++) {
+	for (let offsetX = 0; offsetX < 18; offsetX++) {
+		for (let offsetY = 0; offsetY < 18; offsetY++) {
 
-			proms.push(new Promise(async resolve => {
+			const realOffsetX = offsetX - 1
+			const realOffsetY = offsetY - 1
 
-				const tile = tileCache[(block.x * 512) + (offsetX * 32) + ',' + ((block.y * 512) + (offsetY * 32))] || await tileDb.findOne({
-					mapX: (block.x * 512) + (offsetX * 32),
-					mapY: (block.y * 512) + (offsetY * 32),
-				}) || {}
+			const tile = tileCache[(block.x * 512) + (realOffsetX * 32) + ',' + ((block.y * 512) + (realOffsetY * 32))]
 
-				const topMiddle = tileCache[tile.mapX + ',' + (tile.mapY + 32)] || await tileDb.findOne({
-					mapX: tile.mapX,
-					mapY: tile.mapY + 32,
-				})
-				if (topMiddle) {
-					tileCache[tile.mapX + ',' + (tile.mapY + 32)] = topMiddle
-				}
+			if (tile) {
 
-				const middleLeft = tileCache[(tile.mapX - 32) + ',' + tile.mapY] || await tileDb.findOne({
-					mapX: tile.mapX - 32,
-					mapY: tile.mapY,
-				})
-				if (middleLeft) {
-					tileCache[(tile.mapX - 32) + ',' + tile.mapY] = middleLeft
-				}
+				tile.updated = updated
 
-				const middleRight = tileCache[(tile.mapX + 32) + ',' + tile.mapY] || await tileDb.findOne({
-					mapX: tile.mapX + 32,
-					mapY: tile.mapY,
-				})
-				if (middleRight) {
-					tileCache[(tile.mapX + 32) + ',' + tile.mapY] = middleRight
-				}
+				const topMiddle = tileCache[tile.mapX + ',' + (tile.mapY + 32)]
 
-				const bottomMiddle = tileCache[tile.mapX + ',' + (tile.mapY - 32)] || await tileDb.findOne({
-					mapX: tile.mapX,
-					mapY: tile.mapY - 32,
-				})
-				if (bottomMiddle) {
-					tileCache[tile.mapX + ',' + (tile.mapY - 32)] = bottomMiddle
-				}
+				const middleLeft = tileCache[(tile.mapX - 32) + ',' + tile.mapY]
+
+				const middleRight = tileCache[(tile.mapX + 32) + ',' + tile.mapY]
+
+				const bottomMiddle = tileCache[tile.mapX + ',' + (tile.mapY - 32)]
 
 				const grass = '112,192,160'
 				const sand = '216,200,128'
@@ -665,219 +591,185 @@ const firstPass = async (tileDb, block, tileCache) => {
 
 				tile.img2 = tile.img
 
-				if (
-					tileColour === sand
-					&& middleRightColour === sand
-					&& bottomMiddleColour === sand
-					&& topMiddleColour === grass
-					&& middleLeftColour === grass
-				) {
-					tile.img2 = 'sand-1'
-				} else if (
-					tileColour === sand
-					&& middleRightColour === sand
-					&& bottomMiddleColour === sand
-					&& topMiddleColour === grass
-					&& middleLeftColour === sand
-				) {
-					tile.img2 = 'sand-2'
-				} else if (
-					tileColour === sand
-					&& middleRightColour === grass
-					&& bottomMiddleColour === sand
-					&& topMiddleColour === grass
-					&& middleLeftColour === sand
-				) {
-					tile.img2 = 'sand-3'
-				} else if (
-					tileColour === sand
-					&& middleRightColour === sand
-					&& bottomMiddleColour === sand
-					&& topMiddleColour === sand
-					&& middleLeftColour === grass
-				) {
-					tile.img2 = 'sand-4'
-				} else if (
-					tileColour === sand
-					&& middleRightColour === grass
-					&& bottomMiddleColour === sand
-					&& topMiddleColour === sand
-					&& middleLeftColour === sand
-				) {
-					tile.img2 = 'sand-6'
-				} else if (
-					tileColour === sand
-					&& middleRightColour === sand
-					&& bottomMiddleColour === grass
-					&& topMiddleColour === sand
-					&& middleLeftColour === grass
-				) {
-					tile.img2 = 'sand-7'
-				} else if (
-					tileColour === sand
-					&& middleRightColour === sand
-					&& bottomMiddleColour === grass
-					&& topMiddleColour === sand
-					&& middleLeftColour === sand
-				) {
-					tile.img2 = 'sand-8'
-				} else if (
-					tileColour === sand
-					&& middleRightColour === grass
-					&& bottomMiddleColour === grass
-					&& topMiddleColour === sand
-					&& middleLeftColour === sand
-				) {
-					tile.img2 = 'sand-9'
-				}
-
-				resolve()
-			}))
-
+			}
 		}
 	}
 
-	await Promise.all(proms)
-
 }
 
-const secondPass = async (tileDb, block, tileCache) => {
+const secondPass = async (block, tileCache) => {
 
 	const colours = []
-	// turn tiles into sprites
 
 	// turn tiles into sprites
-	for (let offsetX = 0; offsetX < 512 / 32; offsetX++) {
-		for (let offsetY = 0; offsetY < 512 / 32; offsetY++) {
+	for (let offsetX = 0; offsetX < 18; offsetX++) {
+		for (let offsetY = 0; offsetY < 18; offsetY++) {
 
-			const tile = tileCache[(block.x * 512) + (offsetX * 32) + ',' + ((block.y * 512) + (offsetY * 32))] || await tileDb.findOne({
-				mapX: (block.x * 512) + (offsetX * 32),
-				mapY: (block.y * 512) + (offsetY * 32),
-			}) || {}
+			const realOffsetX = offsetX - 1
+			const realOffsetY = offsetY - 1
 
-			const topMiddle = tileCache[tile.mapX + ',' + (tile.mapY + 32)] || await tileDb.findOne({
-				mapX: tile.mapX,
-				mapY: tile.mapY + 32,
-			})
-			if (topMiddle) {
-				tileCache[tile.mapX + ',' + (tile.mapY + 32)] = topMiddle
-			}
+			const tile = tileCache[(block.x * 512) + (realOffsetX * 32) + ',' + ((block.y * 512) + (realOffsetY * 32))]
 
-			const middleLeft = tileCache[(tile.mapX - 32) + ',' + tile.mapY] || await tileDb.findOne({
-				mapX: tile.mapX - 32,
-				mapY: tile.mapY,
-			})
-			if (middleLeft) {
-				tileCache[(tile.mapX - 32) + ',' + tile.mapY] = middleLeft
-			}
+			if (tile) {
 
-			const middleRight = tileCache[(tile.mapX + 32) + ',' + tile.mapY] || await tileDb.findOne({
-				mapX: tile.mapX + 32,
-				mapY: tile.mapY,
-			})
-			if (middleRight) {
-				tileCache[(tile.mapX + 32) + ',' + tile.mapY] = middleRight
-			}
+				const topLeft = tileCache[(tile.mapX - 32) + ',' + (tile.mapY + 32)]
 
-			const bottomMiddle = tileCache[tile.mapX + ',' + (tile.mapY - 32)] || await tileDb.findOne({
-				mapX: tile.mapX,
-				mapY: tile.mapY - 32,
-			})
-			if (bottomMiddle) {
-				tileCache[tile.mapX + ',' + (tile.mapY - 32)] = bottomMiddle
-			}
+				const topMiddle = tileCache[tile.mapX + ',' + (tile.mapY + 32)]
 
-			const grass = 'grass'
-			const sand = 'sand-5'
-			const sands = ['sand-1', 'sand-2', 'sand-3', 'sand-4', 'sand-5', 'sand-6', 'sand-7', 'sand-8', 'sand-9']
-			const tileColour = [grass, ...sands].includes(tile.img) ? tile.img : grass
+				const topRight = tileCache[(tile.mapX + 32) + ',' + (tile.mapY + 32)]
 
-			const debug = false
+				const middleLeft = tileCache[(tile.mapX - 32) + ',' + tile.mapY]
 
-			if (debug) {
-				if (!colours.includes(tileColour.replace(/-/g, ', '))) {
-					colours.push(tileColour.replace(/-/g, ', '))
+				const middleRight = tileCache[(tile.mapX + 32) + ',' + tile.mapY]
+
+				const bottomLeft = tileCache[(tile.mapX - 32) + ',' + (tile.mapY - 32)]
+
+				const bottomMiddle = tileCache[tile.mapX + ',' + (tile.mapY - 32)]
+
+				const bottomRight = tileCache[(tile.mapX + 32) + ',' + (tile.mapY - 32)]
+
+				const grass = 'grass'
+				const sand = 'sand-5'
+				const tileColour = [grass, sand].includes(tile.img) ? tile.img : grass
+
+				const debug = false
+
+				if (debug) {
+					if (!colours.includes(tileColour.replace(/-/g, ', '))) {
+						colours.push(tileColour.replace(/-/g, ', '))
+					}
+
+					console.log(colours)
 				}
 
-				console.log(colours)
-			}
+				const topMiddleColour = topMiddle && [grass, sand].includes(topMiddle.img) ? topMiddle.img : grass
+				const middleLeftColour = middleLeft && [grass, sand].includes(middleLeft.img) ? middleLeft.img : grass
+				const middleRightColour = middleRight && [grass, sand].includes(middleRight.img) ? middleRight.img : grass
+				const bottomMiddleColour = bottomMiddle && [grass, sand].includes(bottomMiddle.img) ? bottomMiddle.img : grass
+				const topLeftColour = topLeft && [grass, sand].includes(topLeft.img) ? topLeft.img : grass
+				const topRightColour = topRight && [grass, sand].includes(topRight.img) ? topRight.img : grass
+				const bottomLeftColour = bottomLeft && [grass, sand].includes(bottomLeft.img) ? bottomLeft.img : grass
+				const bottomRightColour = bottomRight && [grass, sand].includes(bottomRight.img) ? bottomRight.img : grass
 
-			const topMiddleColour = topMiddle && [grass, ...sands].includes(topMiddle?.img) ? topMiddle.img : grass
-			const middleLeftColour = middleLeft && [grass, ...sands].includes(middleLeft?.img) ? middleLeft.img : grass
-			const middleRightColour = middleRight && [grass, ...sands].includes(middleRight?.img) ? middleRight.img : grass
-			const bottomMiddleColour = bottomMiddle && [grass, ...sands].includes(bottomMiddle?.img) ? bottomMiddle.img : grass
+				const topMiddleColour2 = topMiddle && [grass, sand].includes(topMiddle.img2) ? topMiddle.img2 : grass
+				const middleLeftColour2 = middleLeft && [grass, sand].includes(middleLeft.img2) ? middleLeft.img2 : grass
+				const middleRightColour2 = middleRight && [grass, sand].includes(middleRight.img2) ? middleRight.img2 : grass
+				const bottomMiddleColour2 = bottomMiddle && [grass, sand].includes(bottomMiddle.img2) ? bottomMiddle.img2 : grass
+				const topLeftColour2 = topLeft && [grass, sand].includes(topLeft.img2) ? topLeft.img2 : grass
+				const topRightColour2 = topRight && [grass, sand].includes(topRight.img2) ? topRight.img2 : grass
+				const bottomLeftColour2 = bottomLeft && [grass, sand].includes(bottomLeft.img2) ? bottomLeft.img2 : grass
+				const bottomRightColour2 = bottomRight && [grass, sand].includes(bottomRight.img2) ? bottomRight.img2 : grass
 
-			tile.needsSaving = true
+				tile.needsSaving = true
 
-			tile.img2 = tile.img
+				if (tileColour === grass) {
+					if (
+						topMiddleColour !== sand
+						&& middleLeftColour !== sand
+						&& middleRightColour !== sand
+						&& bottomMiddleColour !== sand
+						&& topLeftColour !== sand
+						&& topRightColour !== sand
+						&& bottomLeftColour !== sand
+						&& bottomRightColour !== sand
+					) {
+						// maybe make grass
+						let chance = Math.random()
+						if (
+							middleLeftColour === 'grass-2'
+							&& bottomMiddleColour2 === 'grass-2'
+							&& bottomLeftColour2 === 'grass-2'
+						) {
+							chance *= 1.8
+						} else if (
+							(middleLeftColour2 === 'grass-2' && bottomMiddleColour2 === 'grass-2')
+							|| (middleLeftColour2 === 'grass-2' && bottomLeftColour2 === 'grass-2')
+							|| (bottomMiddleColour2 === 'grass-2' && bottomLeftColour2 === 'grass-2')
+						) {
+							chance *= 1.65
+						} else if (
+							middleLeftColour2 === 'grass-2'
+							|| bottomMiddleColour2 === 'grass-2'
+						) {
+							chance *= 1.35
+						}
 
-			if (
-				tile.img === sand
-				&& middleRightColour === sand
-				&& bottomMiddleColour === sand
-				&& topMiddleColour === grass
-				&& middleLeftColour === grass
-			) {
-				tile.img2 = 'sand-1'
-			} else if (
-				tile.img === sand
-				&& middleRightColour === sand
-				&& bottomMiddleColour === sand
-				&& topMiddleColour === grass
-				&& middleLeftColour === sand
-			) {
-				tile.img2 = 'sand-2'
-			} else if (
-				tile.img === sand
-				&& middleRightColour === grass
-				&& bottomMiddleColour === sand
-				&& topMiddleColour === grass
-				&& middleLeftColour === sand
-			) {
-				tile.img2 = 'sand-3'
-			} else if (
-				tile.img === sand
-				&& middleRightColour === sand
-				&& bottomMiddleColour === sand
-				&& topMiddleColour === sand
-				&& middleLeftColour === grass
-			) {
-				tile.img2 = 'sand-4'
-			} else if (
-				tile.img === sand
-				&& middleRightColour === grass
-				&& bottomMiddleColour === sand
-				&& topMiddleColour === sand
-				&& middleLeftColour === sand
-			) {
-				tile.img2 = 'sand-6'
-			} else if (
-				tile.img === sand
-				&& middleRightColour === sand
-				&& bottomMiddleColour === grass
-				&& topMiddleColour === sand
-				&& middleLeftColour === grass
-			) {
-				tile.img2 = 'sand-7'
-			} else if (
-				tile.img === sand
-				&& middleRightColour === sand
-				&& bottomMiddleColour === grass
-				&& topMiddleColour === sand
-				&& middleLeftColour === sand
-			) {
-				tile.img2 = 'sand-8'
-			} else if (
-				tile.img === sand
-				&& middleRightColour === grass
-				&& bottomMiddleColour === grass
-				&& topMiddleColour === sand
-				&& middleLeftColour === sand
-			) {
-				tile.img2 = 'sand-9'
+						if (chance > 0.65) {
+							tile.img2 = 'grass-2'
+						}
+					}
+				}
+
+				if (tileColour === sand) {
+					if (
+						tileColour === sand
+						&& middleRightColour === sand
+						&& bottomMiddleColour === sand
+						&& topMiddleColour === grass
+						&& middleLeftColour === grass
+					) {
+						tile.img2 = 'sand-1'
+					} else if (
+						tileColour === sand
+						&& middleRightColour === sand
+						&& bottomMiddleColour === sand
+						&& topMiddleColour === grass
+						&& middleLeftColour === sand
+					) {
+						tile.img2 = 'sand-2'
+					} else if (
+						tileColour === sand
+						&& middleRightColour === grass
+						&& bottomMiddleColour === sand
+						&& topMiddleColour === grass
+						&& middleLeftColour === sand
+					) {
+						tile.img2 = 'sand-3'
+					} else if (
+						tileColour === sand
+						&& middleRightColour === sand
+						&& bottomMiddleColour === sand
+						&& topMiddleColour === sand
+						&& middleLeftColour === grass
+					) {
+						tile.img2 = 'sand-4'
+					} else if (
+						tileColour === sand
+						&& middleRightColour === grass
+						&& bottomMiddleColour === sand
+						&& topMiddleColour === sand
+						&& middleLeftColour === sand
+					) {
+						tile.img2 = 'sand-6'
+					} else if (
+						tileColour === sand
+						&& middleRightColour === sand
+						&& bottomMiddleColour === grass
+						&& topMiddleColour === sand
+						&& middleLeftColour === grass
+					) {
+						tile.img2 = 'sand-7'
+					} else if (
+						tileColour === sand
+						&& middleRightColour === sand
+						&& bottomMiddleColour === grass
+						&& topMiddleColour === sand
+						&& middleLeftColour === sand
+					) {
+						tile.img2 = 'sand-8'
+					} else if (
+						tileColour === sand
+						&& middleRightColour === grass
+						&& bottomMiddleColour === grass
+						&& topMiddleColour === sand
+						&& middleLeftColour === sand
+					) {
+						tile.img2 = 'sand-9'
+					}
+				}
+
 			}
 		}
-
 	}
 
 }
@@ -885,4 +777,5 @@ const secondPass = async (tileDb, block, tileCache) => {
 module.exports = {
 	v1Block,
 	v1BlockLatLng,
+	v1BatchBlocks,
 }
