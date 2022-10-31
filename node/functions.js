@@ -8,8 +8,12 @@ const { MongoClient } = require('mongodb')
 
 console.log(process.cwd())
 
-const lats = JSON.parse(fs.readFileSync('./assets/lats.json'))
-const lngs = JSON.parse(fs.readFileSync('./assets/lngs.json'))
+let lats
+let lngs
+try {
+	lats = JSON.parse(fs.readFileSync('./assets/lats.json'))
+	lngs = JSON.parse(fs.readFileSync('./assets/lngs.json'))
+} catch { }
 
 const saveMapAtThrottled = throttledQueue(50, 1000)
 
