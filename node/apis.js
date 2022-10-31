@@ -235,7 +235,7 @@ const v1Block = async req => {
 						}, transactionOptions)
 						transactions.current = false
 					}
-				}, 100)
+				}, 50)
 			})
 
 			await generateLogicalBlocks(block, blocks, blockCache)
@@ -331,7 +331,7 @@ const v1Block = async req => {
 					}, transactionOptions)
 					transactions.current = false
 				}
-			}, 100)
+			}, 50)
 		}
 
 		return {
