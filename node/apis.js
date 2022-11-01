@@ -11,6 +11,7 @@ const url = `${process.env.MONGODB_SCHEME}${process.env.MONGODB_USER}:${process.
 console.log('Connecting to MongoDB')
 const client = new MongoClient(url, { useNewUrlParser: true, useUnifiedTopology: true })
 const imageToRgbaMatrix = require('image-to-rgba-matrix');
+require('dotenv').config()
 
 const transactions = {
 	current: undefined,
@@ -194,7 +195,11 @@ const v1Block = async req => {
 
 		let generationRequired = false
 
-		if (dbTiles.length < (16 * 16) || regenerate) {
+		if (
+			dbTiles.length < (16 * 16)
+			|| !dbTiles.every(tile => tile.version === process.env.VERSION)
+			|| regenerate
+		) {
 			generationRequired = true
 			console.log('Generation required for block', blocks.middle.x, blocks.middle.y)
 			// wait for write lock on blocks
@@ -538,7 +543,7 @@ const firstPass = async (block, tileCache) => {
 			if (tile) {
 
 				tile.updated = updated
-
+				tile.version = process.env.VERSION
 				const topMiddle = tileCache[tile.mapX + ',' + (tile.mapY + 32)]
 
 				const middleLeft = tileCache[(tile.mapX - 32) + ',' + tile.mapY]
@@ -673,6 +678,7 @@ const secondPass = async (block, tileCache) => {
 						&& bottomLeftColour !== sand
 						&& bottomRightColour !== sand
 					) {
+						let populated = false
 						// maybe make grass
 						let chance = Math.random()
 						if (
@@ -694,8 +700,57 @@ const secondPass = async (block, tileCache) => {
 							chance *= 1.35
 						}
 
-						if (chance > 0.65) {
+						if (chance > 0.75) {
 							tile.img2 = 'grass-2'
+							populated = true
+						}
+
+						if (!populated) {
+							// maybe spawn flower 1
+							let flowerChance = Math.random()
+							if (
+								bottomLeftColour2 === 'flower-1'
+								|| bottomRightColour2 === 'flower-1'
+								|| topLeftColour2 === 'flower-1'
+								|| topRightColour2 === 'flower-1'
+							) {
+								flowerChance *= 1.3
+							}
+
+							if (flowerChance > 0.98) {
+								tile.img2 = 'flower-1'
+								populated = true
+							}
+						}
+
+						if (!populated) {
+							// maybe spawn flower 2
+							let flowerChance = Math.random()
+							if (
+								bottomMiddleColour2 === 'flower-3'
+							) {
+								flowerChance *= 1.3
+							}
+
+							if (flowerChance > 0.98) {
+								tile.img2 = 'flower-2'
+								populated = true
+							}
+						}
+
+						if (!populated) {
+							// maybe spawn flower 2
+							let flowerChance = Math.random()
+							if (
+								topMiddleColour2 === 'flower-2'
+							) {
+								flowerChance *= 1.3
+							}
+
+							if (flowerChance > 0.98) {
+								tile.img2 = 'flower-3'
+								populated = true
+							}
 						}
 					}
 				}
