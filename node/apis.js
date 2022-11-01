@@ -1,3 +1,5 @@
+const version = '1.0.004'
+
 const fs = require('fs')
 const latsMap = JSON.parse(fs.readFileSync('./assets/latsMap.json'))
 const lngsMap = JSON.parse(fs.readFileSync('./assets/lngsMap.json'))
@@ -197,7 +199,7 @@ const v1Block = async req => {
 
 		if (
 			dbTiles.length < (16 * 16)
-			|| !dbTiles.every(tile => tile.version === process.env.VERSION)
+			|| !dbTiles.every(tile => tile.version === version)
 			|| regenerate
 		) {
 			generationRequired = true
@@ -543,7 +545,7 @@ const firstPass = async (block, tileCache) => {
 			if (tile) {
 
 				tile.updated = updated
-				tile.version = process.env.VERSION
+				tile.version = version
 				const topMiddle = tileCache[tile.mapX + ',' + (tile.mapY + 32)]
 
 				const middleLeft = tileCache[(tile.mapX - 32) + ',' + tile.mapY]
