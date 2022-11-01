@@ -1,4 +1,4 @@
-const version = '1.0.004'
+const version = '1.0.005'
 
 const fs = require('fs')
 const latsMap = JSON.parse(fs.readFileSync('./assets/latsMap.json'))
@@ -719,7 +719,7 @@ const secondPass = async (block, tileCache) => {
 								flowerChance *= 1.3
 							}
 
-							if (flowerChance > 0.98) {
+							if (flowerChance > 0.99) {
 								tile.img2 = 'flower-1'
 								populated = true
 							}
@@ -734,7 +734,7 @@ const secondPass = async (block, tileCache) => {
 								flowerChance *= 1.3
 							}
 
-							if (flowerChance > 0.98) {
+							if (flowerChance > 0.99) {
 								tile.img2 = 'flower-2'
 								populated = true
 							}
@@ -749,7 +749,7 @@ const secondPass = async (block, tileCache) => {
 								flowerChance *= 1.3
 							}
 
-							if (flowerChance > 0.98) {
+							if (flowerChance > 0.99) {
 								tile.img2 = 'flower-3'
 								populated = true
 							}
