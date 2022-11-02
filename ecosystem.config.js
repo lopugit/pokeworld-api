@@ -6,6 +6,8 @@ module.exports = {
 			watch: ['.', './node'],
 			autorestart: false,
 			/* eslint-disable camelcase */
+			exec_mode: 'cluster',
+			instances: 2,
 			ignore_watch: './db',
 			/* eslint-enable camelcase */
 			namespace: 'pokeworld',
