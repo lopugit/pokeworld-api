@@ -1,4 +1,4 @@
-const version = '1.0.005'
+const version = '1.0.0011'
 
 const fs = require('fs')
 const latsMap = JSON.parse(fs.readFileSync('./assets/latsMap.json'))
@@ -546,38 +546,39 @@ const firstPass = async (block, tileCache) => {
 
 				tile.updated = updated
 				tile.version = version
-				const topMiddle = tileCache[tile.mapX + ',' + (tile.mapY + 32)]
-
-				const middleLeft = tileCache[(tile.mapX - 32) + ',' + tile.mapY]
-
-				const middleRight = tileCache[(tile.mapX + 32) + ',' + tile.mapY]
-
-				const bottomMiddle = tileCache[tile.mapX + ',' + (tile.mapY - 32)]
 
 				const grass = '112,192,160'
 				const sand = '216,200,128'
-				const tileColour = [grass, sand].includes(tile?.colourData?.max) ? tile.colourData.max : grass
+				const path = '159,208,191'
+				const road = '215,224,232'
+
+				const coloursArray = [grass, sand, path, road]
+
+				const tileColour = getTileOffsetColour(tile, [0, 0], tileCache, coloursArray)
 
 				const debug = false
 
 				if (debug) {
-					if (!colours.includes(tileColour.replace(/-/g, ', '))) {
-						colours.push(tileColour.replace(/-/g, ', '))
+					if (tile?.colourData?.max === path) {
+						console.log('Path tile', tile?.colourData?.max, tileColour)
 					}
 
-					console.log(colours)
+					if (!colours.includes(tile?.colourData?.max)) {
+						colours.push(tile?.colourData?.max)
+					}
+
 				}
 
-				const topMiddleColour = topMiddle && [grass, sand].includes(topMiddle?.colourData?.max) ? topMiddle.colourData.max : grass
-				const middleLeftColour = middleLeft && [grass, sand].includes(middleLeft?.colourData?.max) ? middleLeft.colourData.max : grass
-				const middleRightColour = middleRight && [grass, sand].includes(middleRight?.colourData?.max) ? middleRight.colourData.max : grass
-				const bottomMiddleColour = bottomMiddle && [grass, sand].includes(bottomMiddle?.colourData?.max) ? bottomMiddle.colourData.max : grass
+				const topMiddleSprite = getTileOffsetColour(tile, [0, 1], tileCache, coloursArray)
+				const middleLeftSprite = getTileOffsetColour(tile, [-1, 0], tileCache, coloursArray)
+				const middleRightSprite = getTileOffsetColour(tile, [1, 0], tileCache, coloursArray)
+				const bottomMiddleSprite = getTileOffsetColour(tile, [0, -1], tileCache, coloursArray)
 
 				const surroundedByGrass = [
-					topMiddleColour,
-					middleLeftColour,
-					middleRightColour,
-					bottomMiddleColour,
+					topMiddleSprite,
+					middleLeftSprite,
+					middleRightSprite,
+					bottomMiddleSprite,
 				].reduce((acc, colour) => colour === grass ? acc + 1 : acc) >= 3
 
 				tile.needsSaving = true
@@ -588,12 +589,16 @@ const firstPass = async (block, tileCache) => {
 					tile.img = 'grass'
 				} else if (
 					surroundedByGrass
-					|| (topMiddleColour === grass && bottomMiddleColour === grass)
-					|| (middleLeftColour === grass && middleRightColour === grass)
+					|| (topMiddleSprite === grass && bottomMiddleSprite === grass)
+					|| (middleLeftSprite === grass && middleRightSprite === grass)
 				) {
 					tile.img = 'grass'
-				} else {
+				} else if (tileColour === sand) {
 					tile.img = 'sand-5'
+				} else if (tileColour === path) {
+					tile.img = 'path-5'
+				} else if (tileColour === road) {
+					tile.img = 'road-5'
 				}
 
 				tile.img2 = tile.img
@@ -619,85 +624,71 @@ const secondPass = async (block, tileCache) => {
 
 			if (tile) {
 
-				const topLeft = tileCache[(tile.mapX - 32) + ',' + (tile.mapY + 32)]
+				const topLeftSprite = getTileOffsetSprite(tile, [-1, 1], tileCache)
+				const topMiddleSprite = getTileOffsetSprite(tile, [0, 1], tileCache)
+				const topRightSprite = getTileOffsetSprite(tile, [1, 1], tileCache)
+				const middleLeftSprite = getTileOffsetSprite(tile, [-1, 0], tileCache)
+				const middleRightSprite = getTileOffsetSprite(tile, [1, 0], tileCache)
+				const bottomLeftSprite = getTileOffsetSprite(tile, [-1, -1], tileCache)
+				const bottomMiddleSprite = getTileOffsetSprite(tile, [0, -1], tileCache)
+				const bottomRightSprite = getTileOffsetSprite(tile, [1, -1], tileCache)
 
-				const topMiddle = tileCache[tile.mapX + ',' + (tile.mapY + 32)]
-
-				const topRight = tileCache[(tile.mapX + 32) + ',' + (tile.mapY + 32)]
-
-				const middleLeft = tileCache[(tile.mapX - 32) + ',' + tile.mapY]
-
-				const middleRight = tileCache[(tile.mapX + 32) + ',' + tile.mapY]
-
-				const bottomLeft = tileCache[(tile.mapX - 32) + ',' + (tile.mapY - 32)]
-
-				const bottomMiddle = tileCache[tile.mapX + ',' + (tile.mapY - 32)]
-
-				const bottomRight = tileCache[(tile.mapX + 32) + ',' + (tile.mapY - 32)]
+				const topLeftSprite2 = getTileOffsetSprite2(tile, [-1, 1], tileCache)
+				const topMiddleSprite2 = getTileOffsetSprite2(tile, [0, 1], tileCache)
+				const topRightSprite2 = getTileOffsetSprite2(tile, [1, 1], tileCache)
+				const middleLeftSprite2 = getTileOffsetSprite2(tile, [-1, 0], tileCache)
+				const middleRightSprite2 = getTileOffsetSprite2(tile, [1, 0], tileCache)
+				const bottomLeftSprite2 = getTileOffsetSprite2(tile, [-1, -1], tileCache)
+				const bottomMiddleSprite2 = getTileOffsetSprite2(tile, [0, -1], tileCache)
+				const bottomRightSprite2 = getTileOffsetSprite2(tile, [1, -1], tileCache)
 
 				const grass = 'grass'
 				const sand = 'sand-5'
-				const tileColour = [grass, sand].includes(tile.img) ? tile.img : grass
+				const path = 'path-5'
+				const road = 'road-5'
 
-				const debug = false
-
-				if (debug) {
-					if (!colours.includes(tileColour.replace(/-/g, ', '))) {
-						colours.push(tileColour.replace(/-/g, ', '))
-					}
-
-					console.log(colours)
+				const colours = {
+					grass,
+					sand,
+					path,
+					road,
 				}
 
-				const topMiddleColour = topMiddle && [grass, sand].includes(topMiddle.img) ? topMiddle.img : grass
-				const middleLeftColour = middleLeft && [grass, sand].includes(middleLeft.img) ? middleLeft.img : grass
-				const middleRightColour = middleRight && [grass, sand].includes(middleRight.img) ? middleRight.img : grass
-				const bottomMiddleColour = bottomMiddle && [grass, sand].includes(bottomMiddle.img) ? bottomMiddle.img : grass
-				const topLeftColour = topLeft && [grass, sand].includes(topLeft.img) ? topLeft.img : grass
-				const topRightColour = topRight && [grass, sand].includes(topRight.img) ? topRight.img : grass
-				const bottomLeftColour = bottomLeft && [grass, sand].includes(bottomLeft.img) ? bottomLeft.img : grass
-				const bottomRightColour = bottomRight && [grass, sand].includes(bottomRight.img) ? bottomRight.img : grass
+				const invalidLongGrassSibling = [sand, path, road]
 
-				const topMiddleColour2 = topMiddle && [grass, sand].includes(topMiddle.img2) ? topMiddle.img2 : grass
-				const middleLeftColour2 = middleLeft && [grass, sand].includes(middleLeft.img2) ? middleLeft.img2 : grass
-				const middleRightColour2 = middleRight && [grass, sand].includes(middleRight.img2) ? middleRight.img2 : grass
-				const bottomMiddleColour2 = bottomMiddle && [grass, sand].includes(bottomMiddle.img2) ? bottomMiddle.img2 : grass
-				const topLeftColour2 = topLeft && [grass, sand].includes(topLeft.img2) ? topLeft.img2 : grass
-				const topRightColour2 = topRight && [grass, sand].includes(topRight.img2) ? topRight.img2 : grass
-				const bottomLeftColour2 = bottomLeft && [grass, sand].includes(bottomLeft.img2) ? bottomLeft.img2 : grass
-				const bottomRightColour2 = bottomRight && [grass, sand].includes(bottomRight.img2) ? bottomRight.img2 : grass
+				const tileColour = getTileSprite(tile.mapX, tile.mapY, tileCache)
 
 				tile.needsSaving = true
 
 				if (tileColour === grass) {
 					if (
-						topMiddleColour !== sand
-						&& middleLeftColour !== sand
-						&& middleRightColour !== sand
-						&& bottomMiddleColour !== sand
-						&& topLeftColour !== sand
-						&& topRightColour !== sand
-						&& bottomLeftColour !== sand
-						&& bottomRightColour !== sand
+						!invalidLongGrassSibling.includes(topMiddleSprite)
+						&& !invalidLongGrassSibling.includes(middleLeftSprite)
+						&& !invalidLongGrassSibling.includes(middleRightSprite)
+						&& !invalidLongGrassSibling.includes(bottomMiddleSprite)
+						&& !invalidLongGrassSibling.includes(topLeftSprite)
+						&& !invalidLongGrassSibling.includes(topRightSprite)
+						&& !invalidLongGrassSibling.includes(bottomLeftSprite)
+						&& !invalidLongGrassSibling.includes(bottomRightSprite)
 					) {
 						let populated = false
 						// maybe make grass
 						let chance = Math.random()
 						if (
-							middleLeftColour === 'grass-2'
-							&& bottomMiddleColour2 === 'grass-2'
-							&& bottomLeftColour2 === 'grass-2'
+							middleLeftSprite2 === 'grass-2'
+							&& bottomMiddleSprite2 === 'grass-2'
+							&& bottomLeftSprite2 === 'grass-2'
 						) {
 							chance *= 1.8
 						} else if (
-							(middleLeftColour2 === 'grass-2' && bottomMiddleColour2 === 'grass-2')
-							|| (middleLeftColour2 === 'grass-2' && bottomLeftColour2 === 'grass-2')
-							|| (bottomMiddleColour2 === 'grass-2' && bottomLeftColour2 === 'grass-2')
+							(middleLeftSprite2 === 'grass-2' && bottomMiddleSprite2 === 'grass-2')
+							|| (middleLeftSprite2 === 'grass-2' && bottomLeftSprite2 === 'grass-2')
+							|| (bottomMiddleSprite2 === 'grass-2' && bottomLeftSprite2 === 'grass-2')
 						) {
 							chance *= 1.65
 						} else if (
-							middleLeftColour2 === 'grass-2'
-							|| bottomMiddleColour2 === 'grass-2'
+							middleLeftSprite2 === 'grass-2'
+							|| bottomMiddleSprite2 === 'grass-2'
 						) {
 							chance *= 1.35
 						}
@@ -711,10 +702,10 @@ const secondPass = async (block, tileCache) => {
 							// maybe spawn flower 1
 							let flowerChance = Math.random()
 							if (
-								bottomLeftColour2 === 'flower-1'
-								|| bottomRightColour2 === 'flower-1'
-								|| topLeftColour2 === 'flower-1'
-								|| topRightColour2 === 'flower-1'
+								bottomLeftSprite2 === 'flower-1'
+								|| bottomRightSprite2 === 'flower-1'
+								|| topLeftSprite2 === 'flower-1'
+								|| topRightSprite2 === 'flower-1'
 							) {
 								flowerChance *= 1.3
 							}
@@ -729,7 +720,7 @@ const secondPass = async (block, tileCache) => {
 							// maybe spawn flower 2
 							let flowerChance = Math.random()
 							if (
-								bottomMiddleColour2 === 'flower-3'
+								bottomMiddleSprite2 === 'flower-3'
 							) {
 								flowerChance *= 1.3
 							}
@@ -744,7 +735,7 @@ const secondPass = async (block, tileCache) => {
 							// maybe spawn flower 2
 							let flowerChance = Math.random()
 							if (
-								topMiddleColour2 === 'flower-2'
+								topMiddleSprite2 === 'flower-2'
 							) {
 								flowerChance *= 1.3
 							}
@@ -757,78 +748,160 @@ const secondPass = async (block, tileCache) => {
 					}
 				}
 
-				if (tileColour === sand) {
-					if (
-						tileColour === sand
-						&& middleRightColour === sand
-						&& bottomMiddleColour === sand
-						&& topMiddleColour === grass
-						&& middleLeftColour === grass
-					) {
-						tile.img2 = 'sand-1'
-					} else if (
-						tileColour === sand
-						&& middleRightColour === sand
-						&& bottomMiddleColour === sand
-						&& topMiddleColour === grass
-						&& middleLeftColour === sand
-					) {
-						tile.img2 = 'sand-2'
-					} else if (
-						tileColour === sand
-						&& middleRightColour === grass
-						&& bottomMiddleColour === sand
-						&& topMiddleColour === grass
-						&& middleLeftColour === sand
-					) {
-						tile.img2 = 'sand-3'
-					} else if (
-						tileColour === sand
-						&& middleRightColour === sand
-						&& bottomMiddleColour === sand
-						&& topMiddleColour === sand
-						&& middleLeftColour === grass
-					) {
-						tile.img2 = 'sand-4'
-					} else if (
-						tileColour === sand
-						&& middleRightColour === grass
-						&& bottomMiddleColour === sand
-						&& topMiddleColour === sand
-						&& middleLeftColour === sand
-					) {
-						tile.img2 = 'sand-6'
-					} else if (
-						tileColour === sand
-						&& middleRightColour === sand
-						&& bottomMiddleColour === grass
-						&& topMiddleColour === sand
-						&& middleLeftColour === grass
-					) {
-						tile.img2 = 'sand-7'
-					} else if (
-						tileColour === sand
-						&& middleRightColour === sand
-						&& bottomMiddleColour === grass
-						&& topMiddleColour === sand
-						&& middleLeftColour === sand
-					) {
-						tile.img2 = 'sand-8'
-					} else if (
-						tileColour === sand
-						&& middleRightColour === grass
-						&& bottomMiddleColour === grass
-						&& topMiddleColour === sand
-						&& middleLeftColour === sand
-					) {
-						tile.img2 = 'sand-9'
-					}
-				}
+				patherizeTile(tile, tileCache, colours, 'path')
+				patherizeTile(tile, tileCache, colours, 'sand')
+				patherizeTile(tile, tileCache, colours, 'road')
 
 			}
 		}
 	}
 
+}
+
+const patherizeTile = (tile, tileCache, colours, path) => {
+
+	const validGrassSiblings = [colours.grass, colours.sand, colours.path, colours.road].filter(c => c !== (path + '-5'))
+
+	const topLeftSprite = getTileOffsetSprite(tile, [-1, 1], tileCache)
+	const topMiddleSprite = getTileOffsetSprite(tile, [0, 1], tileCache)
+	const topRightSprite = getTileOffsetSprite(tile, [1, 1], tileCache)
+	const middleLeftSprite = getTileOffsetSprite(tile, [-1, 0], tileCache)
+	const middleRightSprite = getTileOffsetSprite(tile, [1, 0], tileCache)
+	const bottomLeftSprite = getTileOffsetSprite(tile, [-1, -1], tileCache)
+	const bottomMiddleSprite = getTileOffsetSprite(tile, [0, -1], tileCache)
+	const bottomRightSprite = getTileOffsetSprite(tile, [1, -1], tileCache)
+
+	const tileSprite = getTileSprite(tile.mapX, tile.mapY, tileCache)
+
+	if (tileSprite === (path + '-5')) {
+		if (
+			middleRightSprite === (path + '-5')
+			&& bottomMiddleSprite === (path + '-5')
+			&& validGrassSiblings.includes(topMiddleSprite)
+			&& validGrassSiblings.includes(middleLeftSprite)
+		) {
+			tile.img2 = path + '-1'
+		} else if (
+			middleRightSprite === (path + '-5')
+			&& bottomMiddleSprite === (path + '-5')
+			&& validGrassSiblings.includes(topMiddleSprite)
+			&& middleLeftSprite === (path + '-5')
+		) {
+			tile.img2 = path + '-2'
+		} else if (
+			validGrassSiblings.includes(middleRightSprite)
+			&& bottomMiddleSprite === (path + '-5')
+			&& validGrassSiblings.includes(topMiddleSprite)
+			&& middleLeftSprite === (path + '-5')
+		) {
+			tile.img2 = path + '-3'
+		} else if (
+			middleRightSprite === (path + '-5')
+			&& bottomMiddleSprite === (path + '-5')
+			&& topMiddleSprite === (path + '-5')
+			&& validGrassSiblings.includes(middleLeftSprite)
+		) {
+			tile.img2 = path + '-4'
+		} else if (
+			validGrassSiblings.includes(middleRightSprite)
+			&& bottomMiddleSprite === (path + '-5')
+			&& topMiddleSprite === (path + '-5')
+			&& middleLeftSprite === (path + '-5')
+		) {
+			tile.img2 = path + '-6'
+		} else if (
+			middleRightSprite === (path + '-5')
+			&& validGrassSiblings.includes(bottomMiddleSprite)
+			&& topMiddleSprite === (path + '-5')
+			&& validGrassSiblings.includes(middleLeftSprite)
+		) {
+			tile.img2 = path + '-7'
+		} else if (
+			middleRightSprite === (path + '-5')
+			&& validGrassSiblings.includes(bottomMiddleSprite)
+			&& topMiddleSprite === (path + '-5')
+			&& middleLeftSprite === (path + '-5')
+		) {
+			tile.img2 = path + '-8'
+		} else if (
+			validGrassSiblings.includes(middleRightSprite)
+			&& validGrassSiblings.includes(bottomMiddleSprite)
+			&& topMiddleSprite === (path + '-5')
+			&& middleLeftSprite === (path + '-5')
+		) {
+			tile.img2 = path + '-9'
+		}
+	}
+
+}
+
+const getTileOffsetColour = (tile, offset, tileCache, colours) => {
+	const offsetX = offset[0] * 32
+	const offsetY = offset[1] * 32
+	const tileX = tile.mapX + offsetX
+	const tileY = tile.mapY + offsetY
+
+	return getTileColour(tileX, tileY, tileCache, colours)
+
+}
+
+const getTileOffsetSprite = (tile, offset, tileCache) => {
+	const offsetX = offset[0] * 32
+	const offsetY = offset[1] * 32
+	const tileX = tile.mapX + offsetX
+	const tileY = tile.mapY + offsetY
+
+	return getTileSprite(tileX, tileY, tileCache)
+
+}
+
+const getTileOffsetSprite2 = (tile, offset, tileCache) => {
+	const offsetX = offset[0] * 32
+	const offsetY = offset[1] * 32
+	const tileX = tile.mapX + offsetX
+	const tileY = tile.mapY + offsetY
+
+	return getTileSprite2(tileX, tileY, tileCache)
+
+}
+
+const getTileOffset = (tile, offset, tileCache) => {
+	const offsetX = offset[0] * 32
+	const offsetY = offset[1] * 32
+	const tileX = tile.mapX + offsetX
+	const tileY = tile.mapY + offsetY
+
+	return getTile(tileX, tileY, tileCache)
+
+}
+
+const getTile = (x, y, tileCache) => tileCache[`${x},${y}`]
+
+const getTileColour = (x, y, tileCache, colours) => {
+	const tile = getTile(x, y, tileCache)
+	if (colours.includes(tile?.colourData?.max)) {
+		return tile?.colourData?.max
+	}
+
+	return '112,192,160'
+}
+
+const getTileSprite = (x, y, tileCache) => {
+	const tile = getTile(x, y, tileCache)
+	if (tile && tile.img) {
+		return tile.img
+	}
+
+	return 'grass'
+}
+
+const getTileSprite2 = (x, y, tileCache) => {
+	const tile = getTile(x, y, tileCache)
+	if (tile && tile.img2) {
+		return tile.img2
+	}
+
+	return 'grass'
 }
 
 module.exports = {
