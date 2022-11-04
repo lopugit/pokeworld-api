@@ -1,4 +1,4 @@
-const version = '1.0.0011'
+const version = '1.0.0013'
 
 const fs = require('fs')
 const latsMap = JSON.parse(fs.readFileSync('./assets/latsMap.json'))
@@ -574,12 +574,14 @@ const firstPass = async (block, tileCache) => {
 				const middleRightSprite = getTileOffsetColour(tile, [1, 0], tileCache, coloursArray)
 				const bottomMiddleSprite = getTileOffsetColour(tile, [0, -1], tileCache, coloursArray)
 
-				const surroundedByGrass = [
+				const surroundedByNotSelfCount = [
 					topMiddleSprite,
 					middleLeftSprite,
 					middleRightSprite,
 					bottomMiddleSprite,
-				].reduce((acc, colour) => colour === grass ? acc + 1 : acc) >= 3
+				].reduce((acc, colour) => coloursArray.filter(colour => colour !== tileColour).includes(colour) ? acc + 1 : acc, 0)
+
+				const surroundedByNotSelf = surroundedByNotSelfCount >= 3
 
 				tile.needsSaving = true
 
@@ -588,7 +590,7 @@ const firstPass = async (block, tileCache) => {
 				) {
 					tile.img = 'grass'
 				} else if (
-					surroundedByGrass
+					surroundedByNotSelf
 					|| (topMiddleSprite === grass && bottomMiddleSprite === grass)
 					|| (middleLeftSprite === grass && middleRightSprite === grass)
 				) {
