@@ -60,7 +60,7 @@ const toExport = version => {
 					generate: [],
 					cache: {},
 				},
-				regenerate,
+				regenerate: Boolean(regenerate === true || regenerate === 'true'),
 				offsets,
 				blockX,
 				blockY,
