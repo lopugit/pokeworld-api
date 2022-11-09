@@ -28,15 +28,6 @@ app.get('/v1/blocks', async (req, res) => {
 		res.status(400).send('Something went wrong')
 	}
 })
-app.get('/v1/batchBlocks', async (req, res) => {
-	const resp = await apis.v1BatchBlocks(req)
-	console.log('Done v1 batch blocks')
-	if (resp) {
-		res.status(resp.status).send(resp.send)
-	} else {
-		res.status(400).send('Something went wrong')
-	}
-})
 app.get('/v1/blockLatLng', async (req, res) => {
 	const resp = await apis.v1BlockLatLng(req)
 	if (resp) {
