@@ -7,15 +7,7 @@ const app = express()
 app.use(compression())
 app.use(bodyParser.json())
 const port = process.env.PORT
-const axios = require('axios')
 const pug = require('pug')
-const { DateTime } = require('luxon')
-const bcrypt = require('bcrypt')
-const saltRounds = 10
-const { get } = require('lodash')
-const { roundToNearestTude, getMapAt } = require('./functions.js')
-const fs = require('fs')
-const { MongoClient } = require('mongodb')
 const apis = require('./apis.js')
 
 // Express middleware
@@ -30,6 +22,15 @@ app.get('/', (req, res) => {
 app.get('/v1/block', async (req, res) => {
 	const resp = await apis.v1Block(req)
 	console.log('Done v1 block')
+	if (resp) {
+		res.status(resp.status).send(resp.send)
+	} else {
+		res.status(400).send('Something went wrong')
+	}
+})
+app.get('/v1/blocks', async (req, res) => {
+	const resp = await apis.v1Blocks(req)
+	console.log('Done v1 blocks')
 	if (resp) {
 		res.status(resp.status).send(resp.send)
 	} else {

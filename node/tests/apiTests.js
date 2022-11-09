@@ -19,7 +19,7 @@ test(false, 'v1 block returns map at longitude latitude', async () => {
 })
 
 // test v1 block
-test(true, 'v1 block returns map at longitude latitude', async () => {
+test(false, 'v1 block returns map at longitude latitude', async () => {
 	const startTime = Date.now()
 	const resp = await apis.v1Block({
 		query: {
@@ -103,6 +103,38 @@ test(false, 'v1 block renders block', async () => {
 	if (resp.status === 200) {
 		return true
 	}
+})
+
+// test v1 blocks
+test(true, 'v1 blocks returns blocks', async () => {
+	const startTime = Date.now()
+	const resp = await apis.v1Blocks({
+		query: {
+			blockX: 946648,
+			blockY: 488527,
+			regenerate: true,
+			offsets: [
+				[1, 0],
+				[1, 1],
+				[1, -1],
+				[-1, 1],
+				[-1, 0],
+				[-1, -1],
+				[0, 1],
+				[0, -1],
+				[0, 0],
+
+			],
+		},
+	})
+	const endTime = Date.now() - startTime
+	console.log('Request took', endTime / 1000, 's')
+	if (resp.status === 200) {
+		return true
+	}
+
+	return resp
+
 })
 
 async function test(run, name, callback) {

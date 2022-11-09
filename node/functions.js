@@ -46,12 +46,12 @@ const generateMap = ({
 	json = false,
 	html = false,
 	images = false,
-	mongodb = false,
+	// mongodb = false,
 }) => {
 
 	// Mongodb setup
-	let cacheCollection
-	let map
+	// let cacheCollection
+	// let map
 	try {
 		const url = `${process.env.MONGODB_SCHEME}${process.env.MONGODB_USER}:${process.env.MONGODB_PWD}@${process.env.MONGODB_URL}/${process.env.MONGODB_DB}?retryWrites=true&w=majority${process.env.MONGODB_URL_PARAMS}`
 		console.log('Connecting to MongoDB with url')
@@ -63,8 +63,8 @@ const generateMap = ({
 				console.error('Connection failed', err)
 			} else {
 				console.log('Connected to MongoDB')
-				cacheCollection = client.db(process.env.MONGODB_DB).collection('cache')
-				map = client.db(process.env.MONGODB_DB).collection('map')
+				// cacheCollection = client.db(process.env.MONGODB_DB).collection('cache')
+				// map = client.db(process.env.MONGODB_DB).collection('map')
 			}
 		})
 	} catch (err) {
@@ -301,7 +301,7 @@ async function generateCoordinatesGrid({
 }) {
 
 	// Mongodb setup
-	let cacheCollection
+	// let cacheCollection
 	let map
 	try {
 		const url = `${process.env.MONGODB_SCHEME}${process.env.MONGODB_USER}:${process.env.MONGODB_PWD}@${process.env.MONGODB_URL}/${process.env.MONGODB_DB}?retryWrites=true&w=majority${process.env.MONGODB_URL_PARAMS}`
@@ -311,7 +311,7 @@ async function generateCoordinatesGrid({
 		// Connect to client
 		await client.connect()
 		console.log('Connected to MongoDB')
-		cacheCollection = await client.db(process.env.MONGODB_DB).collection('cache')
+		// cacheCollection = await client.db(process.env.MONGODB_DB).collection('cache')
 		map = await client.db(process.env.MONGODB_DB).collection('map')
 	} catch (err) {
 		console.error(err)
@@ -390,4 +390,73 @@ async function generateCoordinatesGrid({
 
 }
 
-module.exports = { generateCoordinatesGrid, generateMap, getMapAt }
+const getTileOffsetColour = (tile, offset, tileCache, colours) => {
+	const offsetX = offset[0] * 32
+	const offsetY = offset[1] * 32
+	const tileX = tile.mapX + offsetX
+	const tileY = tile.mapY + offsetY
+
+	return getTileColour(tileX, tileY, tileCache, colours)
+
+}
+
+const getTileOffsetSprite = (tile, offset, tileCache) => {
+	const offsetX = offset[0] * 32
+	const offsetY = offset[1] * 32
+	const tileX = tile.mapX + offsetX
+	const tileY = tile.mapY + offsetY
+
+	return getTileSprite(tileX, tileY, tileCache)
+
+}
+
+const getTileOffsetSprite2 = (tile, offset, tileCache) => {
+	const offsetX = offset[0] * 32
+	const offsetY = offset[1] * 32
+	const tileX = tile.mapX + offsetX
+	const tileY = tile.mapY + offsetY
+
+	return getTileSprite2(tileX, tileY, tileCache)
+
+}
+
+const getTileOffset = (tile, offset, tileCache) => {
+	const offsetX = offset[0] * 32
+	const offsetY = offset[1] * 32
+	const tileX = tile.mapX + offsetX
+	const tileY = tile.mapY + offsetY
+
+	return getTile(tileX, tileY, tileCache)
+
+}
+
+const getTile = (x, y, tileCache) => tileCache[`${x},${y}`]
+
+const getTileColour = (x, y, tileCache, colours) => {
+	const tile = getTile(x, y, tileCache)
+	if (colours.includes(tile?.colourData?.max)) {
+		return tile?.colourData?.max
+	}
+
+	return '112,192,160'
+}
+
+const getTileSprite = (x, y, tileCache) => {
+	const tile = getTile(x, y, tileCache)
+	if (tile && tile.img) {
+		return tile.img
+	}
+
+	return 'grass'
+}
+
+const getTileSprite2 = (x, y, tileCache) => {
+	const tile = getTile(x, y, tileCache)
+	if (tile && tile.img2) {
+		return tile.img2
+	}
+
+	return 'grass'
+}
+
+module.exports = { generateCoordinatesGrid, generateMap, getMapAt, getTileOffsetColour, getTileOffsetSprite, getTileOffsetSprite2, getTileOffset, getTile, getTileColour, getTileSprite, getTileSprite2 }
