@@ -19,15 +19,6 @@ app.get('/', (req, res) => {
 	res.status(200).send('Hello Pokeworld!')
 })
 
-app.get('/v1/block', async (req, res) => {
-	const resp = await apis.v1Block(req)
-	console.log('Done v1 block')
-	if (resp) {
-		res.status(resp.status).send(resp.send)
-	} else {
-		res.status(400).send('Something went wrong')
-	}
-})
 app.get('/v1/blocks', async (req, res) => {
 	const resp = await apis.v1Blocks(req)
 	console.log('Done v1 blocks')

@@ -117,14 +117,12 @@ const v1BatchBlocks = async req => {
 
 }
 
-const v1Block = require('./apis/block.js')(version)
 const v1Blocks = require('./apis/blocks.js')(version)
 
 const getLngFromLng = (lng, lngs) => lngs.reduce((acc, tmpLng) => lng > acc.lng ? tmpLng : acc, { lng: -180 })
 const getLatFromLat = (lat, lats) => lats.reduce((acc, tmpLat) => lat > acc.lat ? tmpLat : acc, { lat: -90 })
 
 module.exports = {
-	v1Block,
 	v1Blocks,
 	v1BlockLatLng,
 	v1BatchBlocks,
