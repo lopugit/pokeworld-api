@@ -1,7 +1,9 @@
-const patherizeTile = require('./tiles/patherizeTile');
+const baseRoads = require('./baseRoads');
+const patherize = require('./patherize');
+const flowers = require('./flowers');
 
-module.exports = {
-	tiles: {
-		patherizeTile,
-	},
-}
+module.exports = [
+	baseRoads,
+	patherize,
+	flowers,
+]

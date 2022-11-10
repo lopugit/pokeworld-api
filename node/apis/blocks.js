@@ -70,6 +70,7 @@ const toExport = version => {
 				blockDb,
 				lats: latsDb,
 				lngs: lngsDb,
+				mods,
 			}
 
 			await initBlocks(state)
@@ -424,251 +425,23 @@ const toExport = version => {
 		}
 
 		// generate sprites
-		await generateSpritesFor(state, block)
+		await runMods(state, block)
 
 	}
 
-	const generateSpritesFor = async (state, block) => {
+	const runMods = async (state, block) => {
 
-		console.log('Generating sprites for block', block.x, block.y)
+		const startTime = Date.now()
 
-		await firstPass(state, block)
+		const sortedMods = [...state.mods].sort((a, b) => a.priority - b.priority)
 
-		console.log('First pass complete for block', block.x, block.y)
-
-		await secondPass(state, block)
-
-		console.log('Second pass complete for block', block.x, block.y)
-
-	}
-
-	const firstPass = async (state, block) => {
-
-		const colours = []
-
-		const updated = Date.now()
-
-		// turn tiles into sprites
-		for (let offsetX = 0; offsetX < 16; offsetX++) {
-			for (let offsetY = 0; offsetY < 16; offsetY++) {
-
-				const tile = state.tiles.cache[(block.x * 512) + (offsetX * 32) + ',' + ((block.y * 512) + (offsetY * 32))]
-
-				if (tile) {
-
-					tile.updated = updated
-					tile.version = state.version
-
-					const grass = '112,192,160'
-					const sand = '216,200,128'
-					const path = '159,208,191'
-					const road = '215,224,232'
-
-					const coloursArray = [grass, sand, path, road]
-
-					const tileColour = functions.getTileOffsetColour(tile, [0, 0], state.tiles.cache, coloursArray)
-
-					const debug = false
-
-					if (debug) {
-						if (tile?.colourData?.max === path) {
-							console.log('Path tile', tile?.colourData?.max, tileColour)
-						}
-
-						if (!colours.includes(tile?.colourData?.max)) {
-							colours.push(tile?.colourData?.max)
-						}
-
-					}
-
-					const topMiddleColour = functions.getTileOffsetColour(tile, [0, 1], state.tiles.cache, coloursArray)
-					const middleLeftColour = functions.getTileOffsetColour(tile, [-1, 0], state.tiles.cache, coloursArray)
-					const middleRightColour = functions.getTileOffsetColour(tile, [1, 0], state.tiles.cache, coloursArray)
-					const bottomMiddleColour = functions.getTileOffsetColour(tile, [0, -1], state.tiles.cache, coloursArray)
-
-					const surroundedByNotSelfCount = [
-						topMiddleColour,
-						middleLeftColour,
-						middleRightColour,
-						bottomMiddleColour,
-					].reduce((acc, colour) => coloursArray.filter(colour => colour !== tileColour).includes(colour) ? acc + 1 : acc, 0)
-
-					const surroundedByNotSelf = surroundedByNotSelfCount >= 3
-
-					tile.needsSaving = true
-
-					if (
-						tileColour === grass
-					) {
-						tile.img = 'grass'
-					} else if (
-						surroundedByNotSelf
-						|| (topMiddleColour === grass && bottomMiddleColour === grass)
-						|| (middleLeftColour === grass && middleRightColour === grass)
-					) {
-						tile.img = 'grass'
-					} else if (tileColour === sand) {
-						tile.img = 'sand-5'
-					} else if (tileColour === path) {
-						tile.img = 'path-5'
-					} else if (tileColour === road) {
-						tile.img = 'road-5'
-					}
-
-					tile.img2 = tile.img
-
-				}
-			}
+		for (const mod of sortedMods) {
+			mod.run(state, block)
 		}
 
-	}
+		const endTime = Date.now()
 
-	const secondPass = async (state, block) => {
-
-		// turn tiles into sprites
-		for (let offsetX = 0; offsetX < 16; offsetX++) {
-			for (let offsetY = 0; offsetY < 16; offsetY++) {
-
-				const tile = state.tiles.cache[(block.x * 512) + (offsetX * 32) + ',' + ((block.y * 512) + (offsetY * 32))]
-
-				if (tile) {
-
-					tile.version = state.version
-
-					const topLeftSprite = functions.getTileOffsetSprite(tile, [-1, 1], state.tiles.cache)
-					const topMiddleSprite = functions.getTileOffsetSprite(tile, [0, 1], state.tiles.cache)
-					const topRightSprite = functions.getTileOffsetSprite(tile, [1, 1], state.tiles.cache)
-					const middleLeftSprite = functions.getTileOffsetSprite(tile, [-1, 0], state.tiles.cache)
-					const middleRightSprite = functions.getTileOffsetSprite(tile, [1, 0], state.tiles.cache)
-					const bottomLeftSprite = functions.getTileOffsetSprite(tile, [-1, -1], state.tiles.cache)
-					const bottomMiddleSprite = functions.getTileOffsetSprite(tile, [0, -1], state.tiles.cache)
-					const bottomRightSprite = functions.getTileOffsetSprite(tile, [1, -1], state.tiles.cache)
-
-					const topLeftSprite2 = functions.getTileOffsetSprite2(tile, [-1, 1], state.tiles.cache)
-					const topMiddleSprite2 = functions.getTileOffsetSprite2(tile, [0, 1], state.tiles.cache)
-					const topRightSprite2 = functions.getTileOffsetSprite2(tile, [1, 1], state.tiles.cache)
-					const middleLeftSprite2 = functions.getTileOffsetSprite2(tile, [-1, 0], state.tiles.cache)
-					// const middleRightSprite2 = functions.getTileOffsetSprite2(tile, [1, 0], state.tiles.cache)
-					const bottomLeftSprite2 = functions.getTileOffsetSprite2(tile, [-1, -1], state.tiles.cache)
-					const bottomMiddleSprite2 = functions.getTileOffsetSprite2(tile, [0, -1], state.tiles.cache)
-					const bottomRightSprite2 = functions.getTileOffsetSprite2(tile, [1, -1], state.tiles.cache)
-
-					const grass = 'grass'
-					const sand = 'sand-5'
-					const path = 'path-5'
-					const road = 'road-5'
-
-					const colours = {
-						grass,
-						sand,
-						path,
-						road,
-					}
-
-					if (Object.values(colours).includes(tile.img2)) {
-
-						const invalidLongGrassSibling = [sand, path, road]
-
-						const tileColour = functions.getTileSprite(tile.mapX, tile.mapY, state.tiles.cache)
-
-						tile.needsSaving = true
-
-						if (tileColour === grass) {
-							if (
-								!invalidLongGrassSibling.includes(topMiddleSprite)
-								&& !invalidLongGrassSibling.includes(middleLeftSprite)
-								&& !invalidLongGrassSibling.includes(middleRightSprite)
-								&& !invalidLongGrassSibling.includes(bottomMiddleSprite)
-								&& !invalidLongGrassSibling.includes(topLeftSprite)
-								&& !invalidLongGrassSibling.includes(topRightSprite)
-								&& !invalidLongGrassSibling.includes(bottomLeftSprite)
-								&& !invalidLongGrassSibling.includes(bottomRightSprite)
-							) {
-								let populated = false
-								// maybe make grass
-								let chance = Math.random()
-								if (
-									middleLeftSprite2 === 'grass-2'
-									&& bottomMiddleSprite2 === 'grass-2'
-									&& bottomLeftSprite2 === 'grass-2'
-								) {
-									chance *= 1.8
-								} else if (
-									(middleLeftSprite2 === 'grass-2' && bottomMiddleSprite2 === 'grass-2')
-									|| (middleLeftSprite2 === 'grass-2' && bottomLeftSprite2 === 'grass-2')
-									|| (bottomMiddleSprite2 === 'grass-2' && bottomLeftSprite2 === 'grass-2')
-								) {
-									chance *= 1.65
-								} else if (
-									middleLeftSprite2 === 'grass-2'
-									|| bottomMiddleSprite2 === 'grass-2'
-								) {
-									chance *= 1.35
-								}
-
-								if (chance > 0.75) {
-									tile.img2 = 'grass-2'
-									populated = true
-								}
-
-								if (!populated) {
-									// maybe spawn flower 1
-									let flowerChance = Math.random()
-									if (
-										bottomLeftSprite2 === 'flower-1'
-										|| bottomRightSprite2 === 'flower-1'
-										|| topLeftSprite2 === 'flower-1'
-										|| topRightSprite2 === 'flower-1'
-									) {
-										flowerChance *= 1.3
-									}
-
-									if (flowerChance > 0.99) {
-										tile.img2 = 'flower-1'
-										populated = true
-									}
-								}
-
-								if (!populated) {
-									// maybe spawn flower 2
-									let flowerChance = Math.random()
-									if (
-										bottomMiddleSprite2 === 'flower-3'
-									) {
-										flowerChance *= 1.3
-									}
-
-									if (flowerChance > 0.99) {
-										tile.img2 = 'flower-2'
-										populated = true
-									}
-								}
-
-								if (!populated) {
-									// maybe spawn flower 2
-									let flowerChance = Math.random()
-									if (
-										topMiddleSprite2 === 'flower-2'
-									) {
-										flowerChance *= 1.3
-									}
-
-									if (flowerChance > 0.99) {
-										tile.img2 = 'flower-3'
-										populated = true
-									}
-								}
-							}
-						}
-
-						mods.tiles.patherizeTile(tile, state.tiles.cache, colours, 'path')
-						mods.tiles.patherizeTile(tile, state.tiles.cache, colours, 'sand')
-						mods.tiles.patherizeTile(tile, state.tiles.cache, colours, 'road')
-					}
-
-				}
-			}
-		}
+		console.log('Took', (endTime - startTime) / 1000, 's to run mods for block', block.x, block.y)
 
 	}
 
