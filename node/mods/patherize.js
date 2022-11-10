@@ -1,6 +1,8 @@
 const functions = require('../functions')
 
-const patherizeTile = (state, block) => {
+const priority = 2
+
+const patherize = (state, block) => {
 
 	const updated = Date.now()
 
@@ -19,14 +21,14 @@ const patherizeTile = (state, block) => {
 				const grassPath = 'path-5'
 				const road = 'road-5'
 
-				const colours = {
+				const baseTiles = {
 					grass,
 					sand,
 					grassPath,
 					road,
 				}
 
-				if (Object.values(colours).includes(tile.img)) {
+				if (Object.values(baseTiles).includes(tile.img)) {
 
 					// const topLeftSprite = functions.getTileOffsetSprite(tile, [-1, 1], state.tiles.cache)
 					const topMiddleSprite = functions.getTileOffsetSprite(tile, [0, 1], state.tiles.cache)
@@ -47,7 +49,7 @@ const patherizeTile = (state, block) => {
 
 					for (const path of paths) {
 
-						const validGrassSiblings = [colours.grass, colours.sand, colours.grassPath, colours.road].filter(c => c !== (path + '-5'))
+						const validGrassSiblings = [baseTiles.grass, baseTiles.sand, baseTiles.grassPath, baseTiles.road].filter(c => c !== (path + '-5'))
 
 						if (tileSprite === (path + '-5')) {
 							if (
@@ -106,6 +108,8 @@ const patherizeTile = (state, block) => {
 								&& middleLeftSprite === (path + '-5')
 							) {
 								tile.img2 = path + '-9'
+							} else {
+								tile.img2 = path + '-5'
 							}
 						}
 					}
@@ -119,6 +123,6 @@ const patherizeTile = (state, block) => {
 }
 
 module.exports = {
-	priority: 2,
-	run: patherizeTile,
+	priority,
+	run: patherize,
 }
