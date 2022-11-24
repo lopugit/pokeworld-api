@@ -1,6 +1,8 @@
 const functions = require('../functions')
 
-const priority = 3
+const priority = 999
+const spawnChance1 = 0.9999
+const spawnChance2 = 0.99
 
 const flowers = (state, block) => {
 	const updated = Date.now()
@@ -33,7 +35,7 @@ const flowers = (state, block) => {
 					const topLeftSprite2 = functions.getTileOffsetSprite2(tile, [-1, 1], state.tiles.cache)
 					const topMiddleSprite2 = functions.getTileOffsetSprite2(tile, [0, 1], state.tiles.cache)
 					const topRightSprite2 = functions.getTileOffsetSprite2(tile, [1, 1], state.tiles.cache)
-					const middleLeftSprite2 = functions.getTileOffsetSprite2(tile, [-1, 0], state.tiles.cache)
+					// const middleLeftSprite2 = functions.getTileOffsetSprite2(tile, [-1, 0], state.tiles.cache)
 					// const middleRightSprite2 = functions.getTileOffsetSprite2(tile, [1, 0], state.tiles.cache)
 					const bottomLeftSprite2 = functions.getTileOffsetSprite2(tile, [-1, -1], state.tiles.cache)
 					const bottomMiddleSprite2 = functions.getTileOffsetSprite2(tile, [0, -1], state.tiles.cache)
@@ -71,32 +73,6 @@ const flowers = (state, block) => {
 								&& !invalidLongGrassSibling.includes(bottomRightSprite)
 							) {
 								let populated = false
-								// maybe make grass
-								let chance = Math.random()
-								if (
-									middleLeftSprite2 === 'grass-2'
-									&& bottomMiddleSprite2 === 'grass-2'
-									&& bottomLeftSprite2 === 'grass-2'
-								) {
-									chance *= 1.8
-								} else if (
-									(middleLeftSprite2 === 'grass-2' && bottomMiddleSprite2 === 'grass-2')
-									|| (middleLeftSprite2 === 'grass-2' && bottomLeftSprite2 === 'grass-2')
-									|| (bottomMiddleSprite2 === 'grass-2' && bottomLeftSprite2 === 'grass-2')
-								) {
-									chance *= 1.65
-								} else if (
-									middleLeftSprite2 === 'grass-2'
-									|| bottomMiddleSprite2 === 'grass-2'
-								) {
-									chance *= 1.35
-								}
-
-								if (chance > 0.75) {
-									tile.img2 = 'grass-2'
-									populated = true
-								}
-
 								if (!populated) {
 									// maybe spawn flower 1
 									let flowerChance = Math.random()
@@ -106,7 +82,7 @@ const flowers = (state, block) => {
 										|| topLeftSprite2 === 'flower-1'
 										|| topRightSprite2 === 'flower-1'
 									) {
-										flowerChance *= 1.3
+										flowerChance += 0.3
 									}
 
 									if (flowerChance > 0.99) {
@@ -121,10 +97,10 @@ const flowers = (state, block) => {
 									if (
 										bottomMiddleSprite2 === 'flower-3'
 									) {
-										flowerChance *= 1.3
+										flowerChance += 0.3
 									}
 
-									if (flowerChance > 0.99) {
+									if (flowerChance > spawnChance2) {
 										tile.img2 = 'flower-2'
 										populated = true
 									}
@@ -136,10 +112,10 @@ const flowers = (state, block) => {
 									if (
 										topMiddleSprite2 === 'flower-2'
 									) {
-										flowerChance *= 1.3
+										flowerChance += 0.3
 									}
 
-									if (flowerChance > 0.99) {
+									if (flowerChance > spawnChance1) {
 										tile.img2 = 'flower-3'
 										populated = true
 									}

@@ -1,9 +1,13 @@
-const baseRoads = require('./baseRoads');
+const roads = require('./roads');
 const patherize = require('./patherize');
+const grass = require('./grass');
+const ponds = require('./ponds');
 const flowers = require('./flowers');
 
 module.exports = [
-	baseRoads,
+	roads,
 	patherize,
+	grass,
+	ponds,
 	flowers,
 ]

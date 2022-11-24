@@ -1,6 +1,6 @@
 const functions = require('../functions')
 
-const priority = 2
+const priority = 222
 
 const patherize = (state, block) => {
 

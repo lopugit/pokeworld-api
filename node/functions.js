@@ -292,7 +292,8 @@ async function getMapAt(lat, lng, zoom = 20) {
 			.toBuffer()
 	}
 
-	return 'No image'
+	return fs.readFileSync('./assets/gmap.png')
+
 }
 
 async function generateCoordinatesGrid({
@@ -400,23 +401,23 @@ const getTileOffsetColour = (tile, offset, tileCache, colours) => {
 
 }
 
-const getTileOffsetSprite = (tile, offset, tileCache) => {
+const getTileOffsetSprite = (tile, offset, tileCache, grass = true) => {
 	const offsetX = offset[0] * 32
 	const offsetY = offset[1] * 32
 	const tileX = tile.mapX + offsetX
 	const tileY = tile.mapY + offsetY
 
-	return getTileSprite(tileX, tileY, tileCache)
+	return getTileSprite(tileX, tileY, tileCache, grass)
 
 }
 
-const getTileOffsetSprite2 = (tile, offset, tileCache) => {
+const getTileOffsetSprite2 = (tile, offset, tileCache, grass = true) => {
 	const offsetX = offset[0] * 32
 	const offsetY = offset[1] * 32
 	const tileX = tile.mapX + offsetX
 	const tileY = tile.mapY + offsetY
 
-	return getTileSprite2(tileX, tileY, tileCache)
+	return getTileSprite2(tileX, tileY, tileCache, grass)
 
 }
 
@@ -441,22 +442,22 @@ const getTileColour = (x, y, tileCache, colours) => {
 	return '112,192,160'
 }
 
-const getTileSprite = (x, y, tileCache) => {
+const getTileSprite = (x, y, tileCache, grass) => {
 	const tile = getTile(x, y, tileCache)
 	if (tile && tile.img) {
 		return tile.img
 	}
 
-	return 'grass'
+	return grass ? 'grass' : 'undefined'
 }
 
-const getTileSprite2 = (x, y, tileCache) => {
+const getTileSprite2 = (x, y, tileCache, grass) => {
 	const tile = getTile(x, y, tileCache)
 	if (tile && tile.img2) {
 		return tile.img2
 	}
 
-	return 'grass'
+	return grass ? 'grass' : 'undefined'
 }
 
 module.exports = { generateCoordinatesGrid, generateMap, getMapAt, getTileOffsetColour, getTileOffsetSprite, getTileOffsetSprite2, getTileOffset, getTile, getTileColour, getTileSprite, getTileSprite2 }

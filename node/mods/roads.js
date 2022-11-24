@@ -1,7 +1,7 @@
 
 const functions = require('../functions')
 
-const priority = 1
+const priority = 111
 
 const baseRoads = (state, block) => {
 

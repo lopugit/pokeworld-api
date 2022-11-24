@@ -94,6 +94,8 @@ const toExport = version => {
 					// generate blocks that need generating
 					await generateBlocks(state)
 
+					state.regenerate = false
+
 					// generate edge blocks that need regenerating
 					await regenerateEdgeBlocks(state)
 
